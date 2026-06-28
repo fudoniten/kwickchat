@@ -248,6 +248,8 @@
     (case path
       "/style.css"   (serve-resource ex "public/style.css" "text/css; charset=utf-8")
       "/js/main.js"  (serve-resource ex "public/js/main.js" "application/javascript; charset=utf-8")
+      "/wood.png"    (serve-resource ex "public/wood.png" "image/png")
+      "/dirt.png"    (serve-resource ex "public/dirt.png" "image/png")
       "/favicon.ico" (send-bytes ex 204 (byte-array 0) "image/x-icon" nil)
       "/api/me"       (handle-me ex)
       "/api/join"     (handle-join ex)
