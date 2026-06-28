@@ -71,11 +71,23 @@
             :aria-hidden "true"}
            rects)))
 
+(defn- avatar-or-identicon
+  "Returns either a custom avatar <img> or an identicon <svg> for a user."
+  [name avatar-filename]
+  (if avatar-filename
+    (let [img (.createElement js/document "img")]
+      (set! (.-src img) (str "/avatars/" avatar-filename))
+      (set! (.-className img) "identicon")
+      (set! (.-width img) 22)
+      (set! (.-height img) 22)
+      img)
+    (identicon name)))
+
 ;; ---------------------------------------------------------------------------
 ;; App state
 ;; ---------------------------------------------------------------------------
 
-(defonce state (atom {:room nil :username nil :last-id 0 :stick true}))
+(defonce state (atom {:room nil :username nil :avatar nil :last-id 0 :stick true :avatars []}))
 
 (declare enter-chat)
 
@@ -146,14 +158,14 @@
 ;; Messages
 ;; ---------------------------------------------------------------------------
 
-(defn- append-message [{:keys [id username body]}]
+(defn- append-message [{:keys [id username body avatar]}]
   (when-let [h (by-id "history")]
     (let [name (str username)
           user (node :span {:class "msg-user" :text name})]
       (set! (.. user -style -color) (user-color name))
       (.appendChild h
         (node :div {:class "msg"}
-          (node :span {:class "msg-head"} (identicon name) user)
+          (node :span {:class "msg-head"} (avatar-or-identicon name avatar) user)
           (node :span {:class "msg-body" :text (str body)}))))
     (swap! state update :last-id max id)
     (if (:stick @state)
@@ -198,6 +210,45 @@
                      (js/alert (or (:error r) "Could not send.")))))))))
 
 ;; ---------------------------------------------------------------------------
+;; Avatar picker component
+;; ---------------------------------------------------------------------------
+
+(defn- show-avatar-picker
+  "Shows a modal popup to select an avatar. on-select is called with the chosen filename or nil for identicon."
+  [on-select]
+  (let [overlay (node :div {:class "avatar-picker-overlay"})
+        picker  (node :div {:class "avatar-picker"})
+        close   (fn [] (.remove overlay))
+        
+        ;; Option for identicon (nil avatar)
+        identicon-opt (node :div {:class "avatar-option"
+                                  :on-click (fn [] (on-select nil) (close))})
+        sample-identicon (identicon (:username @state))]
+    
+    (.appendChild identicon-opt sample-identicon)
+    (.appendChild identicon-opt (node :div {:class "avatar-label" :text "Default"}))
+    (.appendChild picker (node :h3 {:text "Choose Avatar"}))
+    (.appendChild picker identicon-opt)
+    
+    ;; Load and display available avatars
+    (-> (fetch-json "/api/avatars" {})
+        (.then (fn [r]
+                 (doseq [avatar (:avatars r)]
+                   (let [opt (node :div {:class "avatar-option"
+                                         :on-click (fn [] (on-select avatar) (close))})
+                         img (.createElement js/document "img")]
+                     (set! (.-src img) (str "/avatars/" avatar))
+                     (set! (.-width img) 64)
+                     (set! (.-height img) 64)
+                     (.appendChild opt img)
+                     (.appendChild opt (node :div {:class "avatar-label" :text (str/replace avatar #"\..+" "")}))
+                     (.appendChild picker opt))))))
+    
+    (.appendChild picker (node :button {:class "primary" :text "Cancel" :on-click close}))
+    (.appendChild overlay picker)
+    (.appendChild (.-body js/document) overlay)))
+
+;; ---------------------------------------------------------------------------
 ;; Screens
 ;; ---------------------------------------------------------------------------
 
@@ -224,30 +275,54 @@
     (.focus input)))
 
 (defn- render-username [room]
-  (let [input  (node :input {:class "name-input" :placeholder "Pick a username"})
+  (let [selected-avatar (atom nil)
+        input  (node :input {:class "name-input" :placeholder "Pick a username"})
         err    (node :div {:class "error"})
+        avatar-btn (node :div {:class "avatar-selector-btn" :id "avatar-btn"})
+        update-avatar-btn (fn []
+                            (clear! avatar-btn)
+                            (.appendChild avatar-btn 
+                              (if @selected-avatar
+                                (let [img (.createElement js/document "img")]
+                                  (set! (.-src img) (str "/avatars/" @selected-avatar))
+                                  (set! (.-width img) 48)
+                                  (set! (.-height img) 48)
+                                  img)
+                                (let [placeholder (.createElement js/document "div")]
+                                  (set! (.-className placeholder) "avatar-placeholder")
+                                  (set! (.-textContent placeholder) "?")
+                                  placeholder)))
+                            (.appendChild avatar-btn (node :div {:class "avatar-hint" :text "Click to choose"})))
         submit (fn []
                  (let [name (str/trim (.-value input))]
                    (when (seq name)
-                     (-> (post-json "/api/join" {:room room :username name})
+                     (swap! state assoc :username name)
+                     (-> (post-json "/api/join" {:room room :username name :avatar @selected-avatar})
                          (.then (fn [r]
                                   (if (:ok r)
-                                    (enter-chat room (:username r))
+                                    (do
+                                      (swap! state assoc :avatar @selected-avatar)
+                                      (enter-chat room (:username r)))
                                     (set! (.-textContent err)
                                           (or (:error r) "Could not join.")))))))))]
+    (.addEventListener avatar-btn "click" 
+                       (fn [] (show-avatar-picker (fn [avatar] 
+                                                     (reset! selected-avatar avatar)
+                                                     (update-avatar-btn)))))
     (.addEventListener input "keydown"
                        (fn [e] (when (= (.-key e) "Enter") (submit))))
+    (update-avatar-btn)
     (mount!
      (node :div {:class "join"}
        (node :h1 {:text "Join chat"})
        (node :p {:class "room-label" :text (str "Chat: " room)})
+       avatar-btn
        input
        err
        (node :button {:class "primary" :text "Join" :on-click submit})))
     (.focus input)))
 
 (defn enter-chat [room username]
-  (swap! state assoc :room room :username username :last-id 0 :stick true)
   (let [history (node :div {:class "history" :id "history"
                             :on-scroll (fn [e] (on-scroll (.-target e)))})
         jump    (node :button {:class "jump hidden" :id "jump" :text "↓ Jump to newest"
@@ -255,7 +330,20 @@
         input   (node :input {:class "msg-input" :id "msg" :placeholder "Type a message…"})
         send    #(do-send room input)
         send-bt (node :button {:class "send" :text "Send" :on-click send})
-        palette (node :div {:class "palette"})]
+        palette (node :div {:class "palette"})
+        avatar-display (node :span {:class "me-avatar" :id "me-avatar"})
+        update-my-avatar (fn []
+                          (clear! avatar-display)
+                          (.appendChild avatar-display (avatar-or-identicon username (:avatar @state))))
+        change-avatar (fn []
+                       (show-avatar-picker 
+                         (fn [new-avatar]
+                           (-> (post-json "/api/change-avatar" {:room room :avatar new-avatar})
+                               (.then (fn [r]
+                                        (when (:ok r)
+                                          (swap! state assoc :avatar new-avatar)
+                                          (update-my-avatar))))))))]
+    (.addEventListener avatar-display "click" change-avatar)
     (.addEventListener input "keydown"
                        (fn [e] (when (= (.-key e) "Enter") (.preventDefault e) (send))))
     (doseq [em emojis]
@@ -264,12 +352,13 @@
                        :on-click (fn []
                                    (set! (.-value input) (str (.-value input) em))
                                    (.focus input))})))
+    (update-my-avatar)
     (mount!
      (node :div {:class "chat"}
        (node :div {:class "topbar"}
          (node :span {:class "room-name" :text room})
          (node :span {:class "me"}
-           (identicon username)
+           avatar-display
            (node :span {:class "me-name" :text (str "you: " username)})))
        (node :div {:class "history-wrap"} history jump)
        palette
@@ -282,7 +371,9 @@
   (-> (fetch-json (str "/api/me?room=" (enc room)) {})
       (.then (fn [r]
                (if-let [u (:username r)]
-                 (enter-chat room u)
+                 (do
+                   (swap! state assoc :room room :username u :avatar (:avatar r) :last-id 0 :stick true)
+                   (enter-chat room u))
                  (render-username room))))))
 
 (defn ^:export main []

@@ -15,12 +15,14 @@
       room       TEXT    NOT NULL,
       username   TEXT    NOT NULL,
       body       TEXT    NOT NULL,
+      avatar     TEXT,
       created_at INTEGER NOT NULL)"
    "CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages (room, id)"
    "CREATE TABLE IF NOT EXISTS members (
       room       TEXT    NOT NULL,
       cookie     TEXT    NOT NULL,
       username   TEXT    NOT NULL,
+      avatar     TEXT,
       created_at INTEGER NOT NULL,
       PRIMARY KEY (room, cookie))"
    ;; A username can be reserved by exactly one cookie within a room.
@@ -43,25 +45,27 @@
   {:id         (.getLong rs "id")
    :username   (.getString rs "username")
    :body       (.getString rs "body")
+   :avatar     (.getString rs "avatar")
    :created_at (.getLong rs "created_at")})
 
 (defn add-message!
   "Persist a message and return it (with its generated id)."
-  [room username body]
+  [room username body avatar]
   (locking lock
     (let [now (System/currentTimeMillis)]
       (with-open [ps (.prepareStatement
-                      @conn "INSERT INTO messages (room, username, body, created_at) VALUES (?,?,?,?)")]
+                      @conn "INSERT INTO messages (room, username, body, avatar, created_at) VALUES (?,?,?,?,?)")]
         (.setString ps 1 room)
         (.setString ps 2 username)
         (.setString ps 3 body)
-        (.setLong   ps 4 now)
+        (.setString ps 4 avatar)
+        (.setLong   ps 5 now)
         (.executeUpdate ps))
       (let [id (with-open [st (.createStatement @conn)
                            rs (.executeQuery st "SELECT last_insert_rowid()")]
                  (.next rs)
                  (.getLong rs 1))]
-        {:id id :room room :username username :body body :created_at now}))))
+        {:id id :room room :username username :body body :avatar avatar :created_at now}))))
 
 (defn messages-since
   "Return up to `limit` messages in `room` with id greater than `since`,
@@ -85,11 +89,13 @@
   [room cookie]
   (locking lock
     (with-open [ps (.prepareStatement
-                    @conn "SELECT username FROM members WHERE room = ? AND cookie = ?")]
+                    @conn "SELECT username, avatar FROM members WHERE room = ? AND cookie = ?")]
       (.setString ps 1 room)
       (.setString ps 2 cookie)
       (with-open [rs (.executeQuery ps)]
-        (when (.next rs) (.getString rs 1))))))
+        (when (.next rs)
+          {:username (.getString rs 1)
+           :avatar   (.getString rs 2)})))))
 
 (defn- username-taken? [room username]
   (with-open [ps (.prepareStatement
@@ -102,23 +108,39 @@
 (defn claim-username!
   "Try to reserve `username` in `room` for `cookie`.
 
-  Returns a map {:status ... :username ...} where status is one of:
+  Returns a map {:status ... :username ... :avatar ...} where status is one of:
     :ok             - reserved (or this cookie already owns this name)
     :already-claimed- this cookie already owns a *different* name here
     :taken          - the name belongs to someone else"
-  [room cookie username]
+  [room cookie username avatar]
   (locking lock
     (if-let [existing (username-for room cookie)]
-      {:status (if (= existing username) :ok :already-claimed)
-       :username existing}
+      {:status (if (= (:username existing) username) :ok :already-claimed)
+       :username (:username existing)
+       :avatar (:avatar existing)}
       (if (username-taken? room username)
-        {:status :taken :username nil}
+        {:status :taken :username nil :avatar nil}
         (do
           (with-open [ps (.prepareStatement
-                          @conn "INSERT INTO members (room, cookie, username, created_at) VALUES (?,?,?,?)")]
+                          @conn "INSERT INTO members (room, cookie, username, avatar, created_at) VALUES (?,?,?,?,?)")]
             (.setString ps 1 room)
             (.setString ps 2 cookie)
             (.setString ps 3 username)
-            (.setLong   ps 4 (System/currentTimeMillis))
+            (.setString ps 4 avatar)
+            (.setLong   ps 5 (System/currentTimeMillis))
             (.executeUpdate ps))
-          {:status :ok :username username})))))
+          {:status :ok :username username :avatar avatar})))))
+
+(defn change-avatar!
+  "Update the avatar for a member identified by `cookie` in `room`.
+  Returns the new avatar on success, or nil if the member doesn't exist."
+  [room cookie avatar]
+  (locking lock
+    (when (username-for room cookie)
+      (with-open [ps (.prepareStatement
+                      @conn "UPDATE members SET avatar = ? WHERE room = ? AND cookie = ?")]
+        (.setString ps 1 avatar)
+        (.setString ps 2 room)
+        (.setString ps 3 cookie)
+        (.executeUpdate ps))
+      avatar)))

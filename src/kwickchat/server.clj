@@ -138,16 +138,18 @@
 
 (defn- handle-me [^HttpExchange ex]
   (let [room (get (query-params ex) "room")
-        [tok new?] (session-token ex)]
+        [tok new?] (session-token ex)
+        user-info (when (valid-room? room) (db/username-for room tok))]
     (if (valid-room? room)
-      (json-response ex 200 {:username (db/username-for room tok)} (when new? tok))
+      (json-response ex 200 (or user-info {}) (when new? tok))
       (json-response ex 400 {:error "bad room"} (when new? tok)))))
 
 (defn- handle-join [^HttpExchange ex]
   (let [body (request-body ex)
         room (:room body)
         [tok new?] (session-token ex)
-        name (clean-name (:username body))]
+        name (clean-name (:username body))
+        avatar (:avatar body)]
     (cond
       (not (valid-room? room))
       (json-response ex 400 {:ok false :error "Bad room."} (when new? tok))
@@ -156,7 +158,7 @@
       (json-response ex 400 {:ok false :error "Use 1–24 letters, numbers, spaces, - or _."} (when new? tok))
 
       :else
-      (let [{:keys [status username]} (db/claim-username! room tok name)]
+      (let [{:keys [status username]} (db/claim-username! room tok name avatar)]
         (case status
           (:ok :already-claimed) (json-response ex 200 {:ok true :username username} (when new? tok))
           :taken (json-response ex 409 {:ok false :error "That name is taken here — pick another."} (when new? tok)))))))
@@ -179,16 +181,16 @@
       (json-response ex 400 {:ok false :error "Bad room."} (when new? tok))
 
       :else
-      (let [username (db/username-for room tok)]
+      (let [user-info (db/username-for room tok)]
         (cond
-          (nil? username)
+          (nil? user-info)
           (json-response ex 403 {:ok false :error "Pick a username first."} (when new? tok))
 
           (nil? text)
           (json-response ex 400 {:ok false :error "Empty or too-long message."} (when new? tok))
 
           :else
-          (let [msg (db/add-message! room username text)]
+          (let [msg (db/add-message! room (:username user-info) text (:avatar user-info))]
             (broadcast! room msg)
             (json-response ex 200 {:ok true :message msg} (when new? tok))))))))
 
@@ -238,6 +240,34 @@
     (send-bytes ex 200 body "text/html; charset=utf-8"
                 (when new? {"Set-Cookie" (set-cookie-header tok)}))))
 
+(defn- handle-avatars
+  "List available avatar filenames from resources/public/avatars/"
+  [^HttpExchange ex]
+  (let [avatars-dir (io/resource "public/avatars")]
+    (if avatars-dir
+      (let [files (->> (file-seq (io/file avatars-dir))
+                       (filter #(.isFile %))
+                       (map #(.getName %))
+                       (filter #(str/ends-with? (str/lower-case %) ".png"))
+                       (sort)
+                       vec)]
+        (json-response ex 200 {:avatars files}))
+      (json-response ex 200 {:avatars []}))))
+
+(defn- handle-change-avatar [^HttpExchange ex]
+  (let [body (request-body ex)
+        room (:room body)
+        avatar (:avatar body)
+        [tok new?] (session-token ex)]
+    (cond
+      (not (valid-room? room))
+      (json-response ex 400 {:ok false :error "Bad room."} (when new? tok))
+
+      :else
+      (if-let [result (db/change-avatar! room tok avatar)]
+        (json-response ex 200 {:ok true :avatar result} (when new? tok))
+        (json-response ex 403 {:ok false :error "Not a member of this room."} (when new? tok))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Routing
 ;; ---------------------------------------------------------------------------
@@ -245,21 +275,31 @@
 (defn- route [^HttpExchange ex]
   (let [method (.getRequestMethod ex)
         path   (.getPath (.getRequestURI ex))]
-    (case path
-      "/style.css"   (serve-resource ex "public/style.css" "text/css; charset=utf-8")
-      "/js/main.js"  (serve-resource ex "public/js/main.js" "application/javascript; charset=utf-8")
-      "/wood.png"    (serve-resource ex "public/wood.png" "image/png")
-      "/dirt.png"    (serve-resource ex "public/dirt.png" "image/png")
-      "/favicon.ico" (send-bytes ex 204 (byte-array 0) "image/x-icon" nil)
-      "/api/me"       (handle-me ex)
-      "/api/join"     (handle-join ex)
-      "/api/messages" (handle-messages ex)
-      "/api/send"     (handle-send ex)
-      "/api/stream"   (handle-stream ex)
+    (cond
+      ;; Static files
+      (= path "/style.css")   (serve-resource ex "public/style.css" "text/css; charset=utf-8")
+      (= path "/js/main.js")  (serve-resource ex "public/js/main.js" "application/javascript; charset=utf-8")
+      (= path "/wood.png")    (serve-resource ex "public/wood.png" "image/png")
+      (= path "/dirt.png")    (serve-resource ex "public/dirt.png" "image/png")
+      (= path "/favicon.ico") (send-bytes ex 204 (byte-array 0) "image/x-icon" nil)
+      
+      ;; Avatar images
+      (str/starts-with? path "/avatars/")
+      (let [filename (subs path 9)]
+        (serve-resource ex (str "public/avatars/" filename) "image/png"))
+      
+      ;; API endpoints
+      (= path "/api/me")            (handle-me ex)
+      (= path "/api/join")          (handle-join ex)
+      (= path "/api/messages")      (handle-messages ex)
+      (= path "/api/send")          (handle-send ex)
+      (= path "/api/stream")        (handle-stream ex)
+      (= path "/api/avatars")       (handle-avatars ex)
+      (= path "/api/change-avatar") (handle-change-avatar ex)
+      
       ;; Everything else is a chat room -> serve the SPA (GET only).
-      (if (= method "GET")
-        (serve-index ex)
-        (send-bytes ex 404 (.getBytes "not found") "text/plain" nil)))))
+      (= method "GET") (serve-index ex)
+      :else (send-bytes ex 404 (.getBytes "not found") "text/plain" nil))))
 
 (defn- handler []
   (reify HttpHandler

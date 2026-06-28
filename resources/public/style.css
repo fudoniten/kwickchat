@@ -97,6 +97,95 @@ input:focus { outline: none; border-color: var(--accent); }
 .room-label { font-weight: 600; color: var(--ink) !important; word-break: break-all; }
 .error { color: #ff6b5e; min-height: 1.4em; font-size: 0.95rem; } /* redstone red */
 
+/* Avatar selector button on join screen */
+.avatar-selector-btn {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--panel);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.avatar-selector-btn:hover { border-color: var(--accent); }
+.avatar-placeholder {
+  width: 48px;
+  height: 48px;
+  background: var(--stone);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--muted);
+}
+.avatar-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Avatar picker modal */
+.avatar-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.avatar-picker {
+  background: var(--panel);
+  border: 2px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+.avatar-picker h3 {
+  width: 100%;
+  text-align: center;
+  margin: 0 0 12px 0;
+  color: var(--ink);
+}
+.avatar-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  background: var(--bubble);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.avatar-option:hover {
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+.avatar-option img, .avatar-option .identicon {
+  width: 64px;
+  height: 64px;
+}
+.avatar-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
 /* ---- Chat ---- */
 .chat {
   display: flex;
@@ -123,6 +212,13 @@ input:focus { outline: none; border-color: var(--accent); }
   color: var(--muted);
   font-size: 0.9rem;
   white-space: nowrap;
+}
+.me-avatar {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.me-avatar:hover {
+  opacity: 0.8;
 }
 
 .history-wrap { position: relative; flex: 1; min-height: 0; }
