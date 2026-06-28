@@ -8,7 +8,7 @@
   --muted: #cdbfa3;     /* faded parchment */
   --accent: #5cab3f;    /* grass-block green */
   --accent-ink: #1d2b14;/* dark leaf green for text on grass buttons */
-  --bubble: #87603c;    /* lighter oak-plank message bubble */
+  --bubble: #6b8e4f;    /* moss green message bubble */
   --border: #45301d;    /* dark-oak bark */
   --stone: #5c5c60;     /* stone grey — topbar, composer, emoji palette */
   --stone-light: #74747a;/* lit stone — emoji hover, topbar identicon */
@@ -23,7 +23,7 @@
     --muted: #b6a988;   /* faded parchment */
     --accent: #4d9636;  /* deep grass green */
     --accent-ink: #15200e;
-    --bubble: #5f4329;  /* oak-log bubble */
+    --bubble: #4d6b3a;  /* dark moss green message bubble */
     --border: #2e1f12;  /* dark bark */
     --stone: #3a3a3e;     /* deepslate */
     --stone-light: #4e4e54;
