@@ -150,7 +150,7 @@ input:focus { outline: none; border-color: var(--accent); }
   align-items: center;
   gap: 6px;
   margin-right: 8px;
-  vertical-align: baseline;
+  vertical-align: middle;
 }
 .msg-user { font-weight: 700; color: var(--accent); }
 .msg-user::after { content: ":"; }
