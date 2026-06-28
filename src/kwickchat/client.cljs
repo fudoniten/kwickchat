@@ -29,6 +29,49 @@
   (str (rand-nth adjectives) "-" (rand-nth nouns) "-" (rand-int 1000)))
 
 ;; ---------------------------------------------------------------------------
+;; Per-user identity: a deterministic colour + identicon derived from the name.
+;; Same username -> same colour and little pixel-icon, everywhere, with no
+;; server state. Pure ClojureScript so the no-npm build stays intact.
+;; ---------------------------------------------------------------------------
+
+(defn- str-hash
+  "FNV-1a 32-bit hash of a string, returned as a non-negative int."
+  [s]
+  (loop [i 0 h (int 2166136261)]
+    (if (< i (count s))
+      (recur (inc i) (js/Math.imul (bit-xor h (.charCodeAt s i)) 16777619))
+      (bit-and h 0x7fffffff))))
+
+(defn- user-color
+  "A vivid, readable HSL colour for a username (stable across sessions)."
+  [name]
+  (str "hsl(" (mod (str-hash name) 360) " 65% 55%)"))
+
+(def ^:private svg-ns "http://www.w3.org/2000/svg")
+
+(defn- svg-node [tag attrs & children]
+  (let [e (.createElementNS js/document svg-ns (name tag))]
+    (doseq [[k v] attrs] (.setAttribute e (name k) (str v)))
+    (doseq [c children :when c] (.appendChild e c))
+    e))
+
+(defn- identicon
+  "A GitHub-style 5x5 identicon for a username: a horizontally-mirrored grid
+  of coloured cells, deterministic from the name's hash. Returns an <svg> node."
+  [name]
+  (let [h     (str-hash name)
+        color (user-color name)
+        ;; columns 0,1,2 are seeded; 3,4 mirror 1,0 -> 15 bits, one per cell
+        rects (for [col (range 3) row (range 5)
+                    :when (bit-test h (+ (* col 5) row))
+                    c     (distinct [col (- 4 col)])]
+                (svg-node :rect {:x c :y row :width 1 :height 1 :fill color}))]
+    (apply svg-node :svg
+           {:class "identicon" :viewBox "0 0 5 5" :width 22 :height 22
+            :aria-hidden "true"}
+           rects)))
+
+;; ---------------------------------------------------------------------------
 ;; App state
 ;; ---------------------------------------------------------------------------
 
@@ -105,10 +148,13 @@
 
 (defn- append-message [{:keys [id username body]}]
   (when-let [h (by-id "history")]
-    (.appendChild h
-      (node :div {:class "msg"}
-        (node :span {:class "msg-user" :text (str username)})
-        (node :span {:class "msg-body" :text (str body)})))
+    (let [name (str username)
+          user (node :span {:class "msg-user" :text name})]
+      (set! (.. user -style -color) (user-color name))
+      (.appendChild h
+        (node :div {:class "msg"}
+          (node :span {:class "msg-head"} (identicon name) user)
+          (node :span {:class "msg-body" :text (str body)}))))
     (swap! state update :last-id max id)
     (if (:stick @state)
       (scroll-bottom!)
@@ -222,7 +268,9 @@
      (node :div {:class "chat"}
        (node :div {:class "topbar"}
          (node :span {:class "room-name" :text room})
-         (node :span {:class "me" :text (str "you: " username)}))
+         (node :span {:class "me"}
+           (identicon username)
+           (node :span {:class "me-name" :text (str "you: " username)})))
        (node :div {:class "history-wrap"} history jump)
        palette
        (node :div {:class "composer"} input send-bt)))
