@@ -37,7 +37,14 @@
     (with-open [st (.createStatement c)]
       (.execute st "PRAGMA journal_mode=WAL")
       (.execute st "PRAGMA busy_timeout=5000")
-      (doseq [ddl schema] (.execute st ddl)))
+      (doseq [ddl schema] (.execute st ddl))
+      ;; Migration: Add avatar columns if they don't exist
+      (try
+        (.execute st "ALTER TABLE messages ADD COLUMN avatar TEXT")
+        (catch Exception _))
+      (try
+        (.execute st "ALTER TABLE members ADD COLUMN avatar TEXT")
+        (catch Exception _)))
     (reset! conn c)
     c))
 

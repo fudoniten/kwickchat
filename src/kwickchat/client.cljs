@@ -219,6 +219,7 @@
   (let [overlay (node :div {:class "avatar-picker-overlay"})
         picker  (node :div {:class "avatar-picker"})
         close   (fn [] (.remove overlay))
+        cancel-btn (node :button {:class "primary" :text "Cancel" :on-click close})
         
         ;; Option for identicon (nil avatar)
         identicon-opt (node :div {:class "avatar-option"
@@ -228,23 +229,31 @@
     (.appendChild identicon-opt sample-identicon)
     (.appendChild identicon-opt (node :div {:class "avatar-label" :text "Default"}))
     (.appendChild picker (node :h3 {:text "Choose Avatar"}))
+    (.appendChild picker cancel-btn)
     (.appendChild picker identicon-opt)
     
-    ;; Load and display available avatars
+    ;; Load and display available avatars, sorted naturally by number
     (-> (fetch-json "/api/avatars" {})
         (.then (fn [r]
-                 (doseq [avatar (:avatars r)]
-                   (let [opt (node :div {:class "avatar-option"
-                                         :on-click (fn [] (on-select avatar) (close))})
-                         img (.createElement js/document "img")]
-                     (set! (.-src img) (str "/avatars/" avatar))
-                     (set! (.-width img) 64)
-                     (set! (.-height img) 64)
-                     (.appendChild opt img)
-                     (.appendChild opt (node :div {:class "avatar-label" :text (str/replace avatar #"\..+" "")}))
-                     (.appendChild picker opt))))))
+                 (let [avatars (->> (:avatars r)
+                                    (sort-by #(js/parseInt (str/replace % #"\D+" "") 10)))]
+                   (doseq [avatar avatars]
+                     (let [opt (node :div {:class "avatar-option"
+                                           :on-click (fn [] (on-select avatar) (close))})
+                           img (.createElement js/document "img")
+                           ;; Extract name without extension and numbers
+                           label (-> avatar
+                                     (str/replace #"\.\w+$" "")
+                                     (str/replace #"^\d+" "")
+                                     (str/trim))]
+                       (set! (.-src img) (str "/avatars/" avatar))
+                       (set! (.-width img) 64)
+                       (set! (.-height img) 64)
+                       (.appendChild opt img)
+                       (when (seq label)
+                         (.appendChild opt (node :div {:class "avatar-label" :text label})))
+                       (.appendChild picker opt)))))))
     
-    (.appendChild picker (node :button {:class "primary" :text "Cancel" :on-click close}))
     (.appendChild overlay picker)
     (.appendChild (.-body js/document) overlay)))
 
