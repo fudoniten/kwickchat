@@ -243,15 +243,20 @@
 (defn- handle-avatars
   "List available avatar filenames from resources/public/avatars/"
   [^HttpExchange ex]
-  (let [avatars-dir (io/resource "public/avatars")]
-    (if avatars-dir
-      (let [files (->> (file-seq (io/file avatars-dir))
+  (try
+    (if-let [url (io/resource "public/avatars")]
+      (let [uri (.toURI url)
+            dir (io/file uri)
+            files (->> (.listFiles dir)
                        (filter #(.isFile %))
                        (map #(.getName %))
                        (filter #(str/ends-with? (str/lower-case %) ".png"))
                        (sort)
                        vec)]
         (json-response ex 200 {:avatars files}))
+      (json-response ex 200 {:avatars []}))
+    (catch Exception e
+      (.printStackTrace e)
       (json-response ex 200 {:avatars []}))))
 
 (defn- handle-change-avatar [^HttpExchange ex]
