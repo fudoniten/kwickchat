@@ -1,0 +1,21 @@
+# Build output
+/target/
+/resources/public/js/
+
+# SQLite databases
+*.db
+*.db-wal
+*.db-shm
+
+# Clojure / tooling
+.cpcache/
+.clj-kondo/.cache/
+.lsp/
+
+# Nix
+result
+result-*
+
+# Editors / OS
+.DS_Store
+*~

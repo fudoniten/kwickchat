@@ -1,0 +1,15 @@
+{:paths ["src" "resources"]
+
+ :deps {org.clojure/clojure   {:mvn/version "1.12.5"}
+        org.clojure/data.json {:mvn/version "2.5.2"}
+        org.xerial/sqlite-jdbc {:mvn/version "3.53.2.0"}}
+
+ :aliases
+ {;; Build the ClojureScript bundle and the uberjar:  clojure -T:build uber
+  :build {:extra-paths ["src" "resources"]
+          :extra-deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
+                       org.clojure/clojurescript      {:mvn/version "1.12.145"}}
+          :ns-default build}
+
+  ;; Run from source (after a cljs build):  clojure -M:run
+  :run {:main-opts ["-m" "kwickchat.server"]}}}
