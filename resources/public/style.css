@@ -10,6 +10,9 @@
   --accent-ink: #1d2b14;/* dark leaf green for text on grass buttons */
   --bubble: #87603c;    /* lighter oak-plank message bubble */
   --border: #45301d;    /* dark-oak bark */
+  --stone: #5c5c60;     /* stone grey — topbar, composer, emoji palette */
+  --stone-light: #74747a;/* lit stone — emoji hover, topbar identicon */
+  --stone-dark: #46464a;/* shaded stone — input field, stone borders */
 }
 @media (prefers-color-scheme: dark) {
   /* Overworld at night / under the canopy. */
@@ -22,6 +25,9 @@
     --accent-ink: #15200e;
     --bubble: #5f4329;  /* oak-log bubble */
     --border: #2e1f12;  /* dark bark */
+    --stone: #3a3a3e;     /* deepslate */
+    --stone-light: #4e4e54;
+    --stone-dark: #2a2a2e;
   }
 }
 
@@ -106,7 +112,8 @@ input:focus { outline: none; border-color: var(--accent); }
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+  background: var(--stone);
+  border-bottom: 1px solid var(--stone-dark);
 }
 .room-name { font-weight: 800; word-break: break-all; }
 .me {
@@ -157,7 +164,7 @@ input:focus { outline: none; border-color: var(--accent); }
   /* crisp pixel edges rather than blurred scaling */
   shape-rendering: crispEdges;
 }
-.topbar .identicon { background: var(--bg); }
+.topbar .identicon { background: var(--stone-light); }
 
 .jump {
   position: absolute;
@@ -177,7 +184,8 @@ input:focus { outline: none; border-color: var(--accent); }
   flex-wrap: wrap;
   gap: 4px;
   padding: 8px 12px;
-  border-top: 1px solid var(--border);
+  background: var(--stone);
+  border-top: 1px solid var(--stone-dark);
   max-height: 124px;
   overflow-y: auto;
 }
@@ -188,17 +196,22 @@ input:focus { outline: none; border-color: var(--accent); }
   padding: 6px;
   border-radius: 10px;
 }
-.emoji:hover { background: var(--bubble); }
+.emoji:hover { background: var(--stone-light); }
 .emoji:active { transform: scale(0.9); }
 
 .composer {
   display: flex;
   gap: 8px;
   padding: 12px;
-  border-top: 1px solid var(--border);
+  background: var(--stone);
+  border-top: 1px solid var(--stone-dark);
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
 }
-.composer .msg-input { flex: 1; }
+.composer .msg-input {
+  flex: 1;
+  background: var(--stone-dark);
+  border-color: var(--stone-dark);
+}
 .send {
   background: var(--accent);
   color: var(--accent-ink);
