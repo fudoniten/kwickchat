@@ -80,7 +80,7 @@
   [room since limit]
   (locking lock
     (with-open [ps (.prepareStatement
-                    @conn "SELECT id, username, body, created_at FROM messages
+                    @conn "SELECT id, username, body, avatar, created_at FROM messages
                            WHERE room = ? AND id > ? ORDER BY id ASC LIMIT ?")]
       (.setString ps 1 room)
       (.setLong   ps 2 since)
