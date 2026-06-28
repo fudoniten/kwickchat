@@ -1,23 +1,27 @@
+/* Minecraft overworld — daytime forest biome.
+   Greet page = deep forest green, chat = dirt/oak-wood brown,
+   text = parchment, accents = grass green. */
 :root {
-  --bg: #f4f6fb;
-  --panel: #ffffff;
-  --ink: #1c2333;
-  --muted: #6b7280;
-  --accent: #3b82f6;
-  --accent-ink: #ffffff;
-  --bubble: #eef2ff;
-  --border: #e3e8f0;
+  --bg: #3c6b35;        /* forest-green greet/landing background */
+  --panel: #6b4a2f;     /* dirt/oak-wood brown chat background */
+  --ink: #f4ead6;       /* parchment text */
+  --muted: #cdbfa3;     /* faded parchment */
+  --accent: #5cab3f;    /* grass-block green */
+  --accent-ink: #1d2b14;/* dark leaf green for text on grass buttons */
+  --bubble: #87603c;    /* lighter oak-plank message bubble */
+  --border: #45301d;    /* dark-oak bark */
 }
 @media (prefers-color-scheme: dark) {
+  /* Overworld at night / under the canopy. */
   :root {
-    --bg: #0f1320;
-    --panel: #171c2b;
-    --ink: #e8ecf5;
-    --muted: #97a1b6;
-    --accent: #4f8cff;
-    --accent-ink: #ffffff;
-    --bubble: #232a3d;
-    --border: #2a3145;
+    --bg: #24401f;      /* dark pine green */
+    --panel: #4a3322;   /* shaded dirt brown */
+    --ink: #ece2cd;     /* parchment */
+    --muted: #b6a988;   /* faded parchment */
+    --accent: #4d9636;  /* deep grass green */
+    --accent-ink: #15200e;
+    --bubble: #5f4329;  /* oak-log bubble */
+    --border: #2e1f12;  /* dark bark */
   }
 }
 
@@ -85,7 +89,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .slug-row input:focus { outline: none; }
 .name-input { width: 100%; text-align: center; }
 .room-label { font-weight: 600; color: var(--ink) !important; word-break: break-all; }
-.error { color: #e11d48; min-height: 1.4em; font-size: 0.95rem; }
+.error { color: #ff6b5e; min-height: 1.4em; font-size: 0.95rem; } /* redstone red */
 
 /* ---- Chat ---- */
 .chat {
