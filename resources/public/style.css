@@ -105,7 +105,14 @@ input:focus { outline: none; border-color: var(--accent); }
   border-bottom: 1px solid var(--border);
 }
 .room-name { font-weight: 800; word-break: break-all; }
-.me { color: var(--muted); font-size: 0.9rem; white-space: nowrap; }
+.me {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
 
 .history-wrap { position: relative; flex: 1; min-height: 0; }
 .history {
@@ -127,9 +134,26 @@ input:focus { outline: none; border-color: var(--accent); }
   word-wrap: break-word;
   overflow-wrap: anywhere;
 }
-.msg-user { font-weight: 700; color: var(--accent); margin-right: 8px; }
+.msg-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  vertical-align: baseline;
+}
+.msg-user { font-weight: 700; color: var(--accent); }
 .msg-user::after { content: ":"; }
 .msg-body { white-space: pre-wrap; }
+
+/* Per-user pixel-icon, hashed from the username. */
+.identicon {
+  flex: none;
+  border-radius: 4px;
+  background: var(--bubble);
+  /* crisp pixel edges rather than blurred scaling */
+  shape-rendering: crispEdges;
+}
+.topbar .identicon { background: var(--bg); }
 
 .jump {
   position: absolute;
