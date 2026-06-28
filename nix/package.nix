@@ -35,14 +35,15 @@ let
 
     installPhase = ''
       mkdir -p "$out"
+      # Strip timestamps and ensure reproducible ordering
+      find "$HOME/.m2/repository" -type f -exec touch -t 197001010000.00 {} +
       cp -r "$HOME/.m2/repository" "$out/repository"
     '';
 
     dontFixup = true;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    # TODO: replace after the first `nix build` prints the real hash.
-    outputHash = "sha256-xQflpIL07Mx2RjykTnP6iXKR8I0Qs3pEsArv1ZcmXWY=";
+    outputHash = "sha256-0GcmEr0ZSkWK2UzRHeSKNOzSQLATYMINC7gnc1d7ZtM=";
   };
 in stdenv.mkDerivation {
   pname = "kwickchat";
