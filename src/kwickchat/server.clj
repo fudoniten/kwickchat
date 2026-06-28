@@ -15,7 +15,8 @@
            [java.net InetSocketAddress URLDecoder]
            [java.nio.charset StandardCharsets]
            [java.util UUID]
-           [java.util.concurrent Executors])
+           [java.util.concurrent Executors]
+           [java.util.jar JarFile])
   (:gen-class))
 
 ;; ---------------------------------------------------------------------------
@@ -245,14 +246,33 @@
   [^HttpExchange ex]
   (try
     (if-let [url (io/resource "public/avatars")]
-      (let [uri (.toURI url)
-            dir (io/file uri)
-            files (->> (.listFiles dir)
-                       (filter #(.isFile %))
-                       (map #(.getName %))
-                       (filter #(str/ends-with? (str/lower-case %) ".png"))
-                       (sort)
-                       vec)]
+      (let [protocol (.getProtocol url)
+            files (cond
+                    ;; Running from filesystem (development)
+                    (= protocol "file")
+                    (let [dir (io/file (.toURI url))]
+                      (->> (.listFiles dir)
+                           (filter #(.isFile %))
+                           (map #(.getName %))
+                           (filter #(str/ends-with? (str/lower-case %) ".png"))
+                           (sort)
+                           vec))
+                    
+                    ;; Running from JAR (production)
+                    (= protocol "jar")
+                    (let [path (.getPath url)
+                          jar-path (subs path 5 (str/index-of path "!"))
+                          jar (JarFile. jar-path)]
+                      (->> (enumeration-seq (.entries jar))
+                           (map #(.getName %))
+                           (filter #(str/starts-with? % "public/avatars/"))
+                           (filter #(str/ends-with? (str/lower-case %) ".png"))
+                           (map #(subs % (count "public/avatars/")))
+                           (filter seq)
+                           (sort)
+                           vec))
+                    
+                    :else [])]
         (json-response ex 200 {:avatars files}))
       (json-response ex 200 {:avatars []}))
     (catch Exception e
