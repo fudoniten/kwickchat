@@ -42,10 +42,9 @@ let
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
     # TODO: replace after the first `nix build` prints the real hash.
-    outputHash = lib.fakeHash;
+    outputHash = "sha256-8QHKchEleqmciQcOAf+FojIIqQ85NLHIb2PPlpn4NGk=";
   };
-in
-stdenv.mkDerivation {
+in stdenv.mkDerivation {
   pname = "kwickchat";
   inherit version;
 
@@ -61,7 +60,7 @@ stdenv.mkDerivation {
     cp -r "${maven-deps}/repository" "$HOME/.m2/repository"
     chmod -R u+w "$HOME/.m2"
     # Compile ClojureScript + assemble the uberjar, strictly offline.
-    clojure -Soffline -T:build uber
+    clojure -T:build uber
     runHook postBuild
   '';
 

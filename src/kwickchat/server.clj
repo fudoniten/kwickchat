@@ -269,10 +269,26 @@
           (try (send-bytes ex 500 (.getBytes "internal error") "text/plain" nil)
                (catch Exception _)))))))
 
-(defn -main [& _]
-  (let [port (Integer/parseInt (or (System/getenv "KWICKCHAT_PORT") "8080"))
-        host (or (System/getenv "KWICKCHAT_HOST") "0.0.0.0")
-        db-path (or (System/getenv "KWICKCHAT_DB") "kwickchat.db")
+(defn -main [& args]
+  (let [;; Parse command-line args: --port <num>, --host <addr>, --db <path>
+        arg-map (loop [remaining args, acc {}]
+                  (if (empty? remaining)
+                    acc
+                    (let [[k v & rest] remaining]
+                      (case k
+                        "--port" (recur rest (assoc acc :port v))
+                        "--host" (recur rest (assoc acc :host v))
+                        "--db"   (recur rest (assoc acc :db v))
+                        (recur (next remaining) acc)))))
+        port (Integer/parseInt (or (:port arg-map)
+                                    (System/getenv "KWICKCHAT_PORT")
+                                    "5660"))
+        host (or (:host arg-map)
+                 (System/getenv "KWICKCHAT_HOST")
+                 "0.0.0.0")
+        db-path (or (:db arg-map)
+                    (System/getenv "KWICKCHAT_DB")
+                    "kwickchat.db")
         server (HttpServer/create (InetSocketAddress. host (int port)) 0)]
     (db/init! db-path)
     (.createContext server "/" (handler))
