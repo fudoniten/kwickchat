@@ -106,29 +106,43 @@ input:focus { outline: none; border-color: var(--accent); }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
   background: var(--panel);
   border: 2px solid var(--border);
   border-radius: 12px;
   cursor: pointer;
-  transition: border-color 0.2s;
+  transition: all 0.2s;
+  position: relative;
 }
-.avatar-selector-btn:hover { border-color: var(--accent); }
+.avatar-selector-btn:hover {
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
 .avatar-placeholder {
-  width: 48px;
-  height: 48px;
+  width: 64px;
+  height: 64px;
   background: var(--stone);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: 32px;
   font-weight: bold;
   color: var(--muted);
 }
+.avatar-selector-btn img {
+  border-radius: 8px;
+}
 .avatar-hint {
+  position: absolute;
+  bottom: -24px;
   font-size: 0.75rem;
   color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+.avatar-selector-btn:hover .avatar-hint {
+  opacity: 1;
 }
 
 /* Avatar picker modal */
