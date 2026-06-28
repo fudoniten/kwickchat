@@ -42,7 +42,7 @@ let
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
     # TODO: replace after the first `nix build` prints the real hash.
-    outputHash = "sha256-8QHKchEleqmciQcOAf+FojIIqQ85NLHIb2PPlpn4NGk=";
+    outputHash = "sha256-xQflpIL07Mx2RjykTnP6iXKR8I0Qs3pEsArv1ZcmXWY=";
   };
 in stdenv.mkDerivation {
   pname = "kwickchat";
