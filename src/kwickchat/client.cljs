@@ -92,9 +92,10 @@
 ;; App state
 ;; ---------------------------------------------------------------------------
 
-(defonce state (atom {:room nil :username nil :avatar nil :last-id 0 :stick true :avatars []}))
+(defonce state (atom {:room nil :username nil :avatar nil :last-id 0 :stick true
+                      :avatars [] :notes {}}))
 
-(declare enter-chat)
+(declare enter-chat upsert-note!)
 
 ;; ---------------------------------------------------------------------------
 ;; DOM helpers
@@ -197,6 +198,11 @@
             (let [msg (js->clj (js/JSON.parse (.-data ev)) :keywordize-keys true)]
               (when (> (:id msg) (:last-id @state))
                 (append-message msg)))))
+    ;; Post-it updates ride the same stream under a named "note" event.
+    (.addEventListener src "note"
+          (fn [ev]
+            (let [note (js->clj (js/JSON.parse (.-data ev)) :keywordize-keys true)]
+              (upsert-note! note))))
     ;; On a reconnect, pull anything we missed while disconnected.
     (set! (.-onopen src)
           (fn [_]
@@ -267,6 +273,105 @@
     
     (.appendChild overlay picker)
     (.appendChild (.-body js/document) overlay)))
+
+;; ---------------------------------------------------------------------------
+;; Post-it notes: one pinned note per member, shown in a side panel. Notes are
+;; keyed by username (unique within a room) and arrive live over SSE.
+;; ---------------------------------------------------------------------------
+
+(defn- postit-node [{:keys [username avatar body]}]
+  (let [name (str username)
+        card (node :div {:class "postit"})]
+    ;; Tint the note with the poster's stable hashed colour.
+    (set! (.. card -style -backgroundColor) (user-color name))
+    (.appendChild card
+      (node :div {:class "postit-head"}
+        (avatar-or-identicon name avatar)
+        (node :span {:class "postit-user" :text name})))
+    (.appendChild card (node :div {:class "postit-body" :text (str body)}))
+    card))
+
+(defn- render-postits! []
+  (when-let [list (by-id "postits-list")]
+    (clear! list)
+    (let [notes (sort-by :updated_at > (vals (:notes @state)))]
+      (if (empty? notes)
+        (.appendChild list
+          (node :div {:class "postit-empty"
+                      :text "No notes yet. Leave one so friends know when you're on!"}))
+        (doseq [n notes] (.appendChild list (postit-node n))))))
+  (when-let [btn (by-id "postit-btn")]
+    (set! (.-textContent btn)
+          (if (contains? (:notes @state) (:username @state))
+            "Replace post" "Make post"))))
+
+(defn- upsert-note! [note]
+  (swap! state assoc-in [:notes (:username note)] note)
+  (render-postits!))
+
+(defn- load-notes [room]
+  (-> (fetch-json (str "/api/notes?room=" (enc room)) {})
+      (.then (fn [r]
+               (swap! state assoc :notes
+                      (into {} (map (juxt :username identity) (:notes r))))
+               (render-postits!)))))
+
+(defn- show-note-composer
+  "Modal to compose or overwrite the current user's post-it (max 128 chars)."
+  [room]
+  (let [overlay  (node :div {:class "avatar-picker-overlay"})
+        modal    (node :div {:class "note-modal"})
+        existing (get-in @state [:notes (:username @state)])
+        textarea (node :textarea {:class "note-textarea"
+                                  :placeholder "e.g. On the server Thursday @ 8pm!"})
+        counter  (node :div {:class "note-count"})
+        close    (fn [] (.remove overlay))
+        update-count (fn []
+                       (set! (.-textContent counter)
+                             (str (.. textarea -value -length) " / 128")))
+        save (fn []
+               (let [body (str/trim (.-value textarea))]
+                 (when (seq body)
+                   (-> (post-json "/api/note" {:room room :body body})
+                       (.then (fn [r]
+                                (if (:ok r)
+                                  (do (upsert-note! (:note r)) (close))
+                                  (js/alert (or (:error r) "Could not save note.")))))))))]
+    (set! (.-maxLength textarea) 128)
+    (when existing (set! (.-value textarea) (:body existing)))
+    (.addEventListener textarea "input" update-count)
+    (.addEventListener textarea "keydown"
+                       (fn [e] (when (and (= (.-key e) "Enter") (not (.-shiftKey e)))
+                                 (.preventDefault e) (save))))
+    (update-count)
+    (.appendChild modal (node :h3 {:text "Your post-it"}))
+    (.appendChild modal textarea)
+    (.appendChild modal counter)
+    (.appendChild modal
+      (node :div {:class "note-actions"}
+        (node :button {:class "ghost" :text "Cancel" :on-click close})
+        (node :button {:class "primary" :text "Save" :on-click save})))
+    (.appendChild overlay modal)
+    (.appendChild (.-body js/document) overlay)
+    (.focus textarea)))
+
+(defn- toggle-postits! []
+  (when-let [l (by-id "layout")]
+    (.toggle (.-classList l) "show-postits")))
+
+(defn- close-postits! []
+  (when-let [l (by-id "layout")]
+    (.remove (.-classList l) "show-postits")))
+
+(defn- postit-panel [room]
+  (node :div {:class "postits"}
+    (node :div {:class "postits-head"}
+      (node :span {:class "postits-title" :text "📌 Post-its"})
+      (node :button {:class "postits-close" :text "✕" :on-click close-postits!}))
+    (node :div {:class "postits-list" :id "postits-list"})
+    (node :div {:class "postits-foot"}
+      (node :button {:class "primary" :id "postit-btn" :text "Make post"
+                     :on-click (fn [] (show-note-composer room))}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Screens
@@ -376,16 +481,21 @@
                                    (.focus input))})))
     (update-my-avatar)
     (mount!
-     (node :div {:class "chat"}
-       (node :div {:class "topbar"}
-         (node :span {:class "room-name" :text room})
-         (node :span {:class "me"}
-           avatar-display
-           (node :span {:class "me-name" :text (str "you: " username)})))
-       (node :div {:class "history-wrap"} history jump)
-       palette
-       (node :div {:class "composer"} input send-bt)))
+     (node :div {:class "app-layout" :id "layout"}
+       (node :div {:class "chat"}
+         (node :div {:class "topbar"}
+           (node :span {:class "room-name" :text room})
+           (node :span {:class "me"}
+             (node :button {:class "postits-toggle" :text "📌"
+                            :on-click toggle-postits!})
+             avatar-display
+             (node :span {:class "me-name" :text (str "you: " username)})))
+         (node :div {:class "history-wrap"} history jump)
+         palette
+         (node :div {:class "composer"} input send-bt))
+       (postit-panel room)))
     (load-history room)
+    (load-notes room)
     (open-stream room)
     (.focus input)))
 

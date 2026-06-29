@@ -49,12 +49,16 @@
       false)))
 
 (defn- broadcast!
-  "Push a message to every browser connected to `room`."
-  [room msg]
-  (let [payload (str "data: " (json/write-str msg) "\n\n")]
-    (doseq [sink (get @listeners room)]
-      (when-not (sse-write sink payload)
-        (unregister! room sink)))))
+  "Push an SSE payload to every browser connected to `room`. With no `event`
+  the browser sees a default `message` event (chat messages); naming an event
+  (e.g. \"note\") lets the client route post-it updates separately."
+  ([room msg] (broadcast! room nil msg))
+  ([room event msg]
+   (let [payload (str (when event (str "event: " event "\n"))
+                      "data: " (json/write-str msg) "\n\n")]
+     (doseq [sink (get @listeners room)]
+       (when-not (sse-write sink payload)
+         (unregister! room sink))))))
 
 ;; ---------------------------------------------------------------------------
 ;; HTTP helpers
@@ -122,6 +126,7 @@
 (def ^:private room-re #"^[A-Za-z0-9._/-]{1,200}$")
 (def ^:private name-re #"^[\p{L}\p{N} _-]{1,24}$")
 (def ^:private max-body 2000)
+(def ^:private max-note 128)
 
 (defn- valid-room? [room] (and room (re-matches room-re room)))
 
@@ -132,6 +137,19 @@
 (defn- clean-body [body]
   (let [b (some-> body str/trim)]
     (when (and b (seq b) (<= (count b) max-body)) b)))
+
+(defn- clean-note [body]
+  (let [b (some-> body str/trim)]
+    (when (and b (seq b) (<= (count b) max-note)) b)))
+
+;; ---------------------------------------------------------------------------
+;; Moderation log: every user-generated message and note is echoed to stdout so
+;; it lands in the systemd journal (journalctl -u kwickchat). These are kids;
+;; a grown-up should be able to skim what's being said.
+;; ---------------------------------------------------------------------------
+
+(defn- log-content! [kind room username body]
+  (println (str "[" kind "] room=" room " user=" username " :: " body)))
 
 ;; ---------------------------------------------------------------------------
 ;; API handlers
@@ -192,8 +210,35 @@
 
           :else
           (let [msg (db/add-message! room (:username user-info) text (:avatar user-info))]
+            (log-content! "chat" room (:username user-info) text)
             (broadcast! room msg)
             (json-response ex 200 {:ok true :message msg} (when new? tok))))))))
+
+(defn- handle-notes [^HttpExchange ex]
+  (let [room (get (query-params ex) "room")]
+    (if (valid-room? room)
+      (json-response ex 200 {:notes (db/notes-for room)})
+      (json-response ex 400 {:error "bad room"}))))
+
+(defn- handle-set-note [^HttpExchange ex]
+  (let [body (request-body ex)
+        room (:room body)
+        [tok new?] (session-token ex)
+        text (clean-note (:body body))]
+    (cond
+      (not (valid-room? room))
+      (json-response ex 400 {:ok false :error "Bad room."} (when new? tok))
+
+      (nil? text)
+      (json-response ex 400 {:ok false :error "Notes are 1–128 characters."} (when new? tok))
+
+      :else
+      (if-let [note (db/set-note! room tok text)]
+        (do
+          (log-content! "note" room (:username note) text)
+          (broadcast! room "note" note)
+          (json-response ex 200 {:ok true :note note} (when new? tok)))
+        (json-response ex 403 {:ok false :error "Pick a username first."} (when new? tok))))))
 
 (defn- handle-stream
   "Open a long-lived Server-Sent Events connection for a room."
@@ -318,6 +363,8 @@
       (= path "/api/join")          (handle-join ex)
       (= path "/api/messages")      (handle-messages ex)
       (= path "/api/send")          (handle-send ex)
+      (= path "/api/notes")         (handle-notes ex)
+      (= path "/api/note")          (handle-set-note ex)
       (= path "/api/stream")        (handle-stream ex)
       (= path "/api/avatars")       (handle-avatars ex)
       (= path "/api/change-avatar") (handle-change-avatar ex)

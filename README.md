@@ -21,9 +21,30 @@ social logins. Just a link and a name.
   without refreshing.
 - The UI is a scrollable history with a *jump-to-newest* button, an emoji
   palette, and a message box. Sending a message jumps you to the bottom.
+- **Post-its.** A side panel holds one pinned note per person — "On the server
+  Thu @ 8pm!" Each member can leave or overwrite their own note (max 128
+  characters); it's tinted with their colour and stamped with their avatar so
+  it's clear who posted it. Notes persist and update live for everyone. On
+  phones the panel is a slide-over toggled with the 📌 button.
 
-Because rooms are unguessable links shared only among friends, there are no
-accounts or moderation features — keep the link private.
+Rooms are unguessable links shared only among friends — keep the link private.
+
+### Moderation log
+
+These are kids, so a grown-up should be able to glance at what's being said.
+Every chat message and post-it is echoed to the server's standard output, which
+the systemd service captures in the journal:
+
+```bash
+journalctl -u kwickchat | grep -E '\[chat\]|\[note\]'
+# [chat] room=minecraft-crew user=Steve :: anyone on tonight?
+# [note] room=minecraft-crew user=Alex  :: free after dinner!
+```
+
+The full history also lives in the SQLite database if you want to query it
+directly. Identity is cookie-based with self-chosen names, so the "who" is only
+as trustworthy as a kid not clearing their cookies — fine for a known friend
+group, but don't treat it as tamper-proof.
 
 ## Tech
 
