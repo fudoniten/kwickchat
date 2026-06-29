@@ -47,6 +47,11 @@
   [name]
   (str "hsl(" (mod (str-hash name) 360) " 65% 55%)"))
 
+(defn- user-bubble-color
+  "A darker HSL color for message bubbles (works well with white text)."
+  [name]
+  (str "hsl(" (mod (str-hash name) 360) " 45% 35%)"))
+
 (def ^:private svg-ns "http://www.w3.org/2000/svg")
 
 (defn- svg-node [tag attrs & children]
@@ -161,12 +166,18 @@
 (defn- append-message [{:keys [id username body avatar]}]
   (when-let [h (by-id "history")]
     (let [name (str username)
-          user (node :span {:class "msg-user" :text name})]
-      (set! (.. user -style -color) (user-color name))
-      (.appendChild h
-        (node :div {:class "msg"}
-          (node :span {:class "msg-head"} (avatar-or-identicon name avatar) user)
-          (node :span {:class "msg-body" :text (str body)}))))
+          is-mine (= name (:username @state))
+          msg-class (if is-mine "msg msg-mine" "msg")
+          msg-div (node :div {:class msg-class})]
+      ;; Set per-user bubble background color
+      (set! (.. msg-div -style -backgroundColor) (user-bubble-color name))
+      (.appendChild msg-div
+        (node :span {:class "msg-head"} 
+          (avatar-or-identicon name avatar)
+          (node :span {:class "msg-user" :text name})))
+      (.appendChild msg-div
+        (node :span {:class "msg-body" :text (str body)}))
+      (.appendChild h msg-div))
     (swap! state update :last-id max id)
     (if (:stick @state)
       (scroll-bottom!)
