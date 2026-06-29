@@ -36,20 +36,31 @@ let
 
     installPhase = ''
       mkdir -p "$out"
-      # Normalize permissions and timestamps for reproducibility
-      find "$HOME/.m2/repository" -type f -exec chmod 644 {} +
-      find "$HOME/.m2/repository" -type d -exec chmod 755 {} +
-      find "$HOME/.m2/repository" -exec touch -t 197001010000.00 {} +
-      # Sort files to ensure consistent ordering
-      (cd "$HOME/.m2" && find repository -type f | LC_ALL=C sort | tar -cf "$TMPDIR/repo.tar" -T -)
-      mkdir -p "$out"
-      tar -xf "$TMPDIR/repo.tar" -C "$out"
+      cp -r "$HOME/.m2/repository" "$out/repository"
+
+      # Drop Maven/deps bookkeeping that is NOT part of the artifacts and
+      # differs from machine to machine (and run to run): per-host repository
+      # ids, download timestamps, and resolver status. Leaving these in is what
+      # makes the fixed-output hash drift between, e.g., a dev box and the
+      # deploy server even though the actual jars are identical.
+      find "$out" -type f \( \
+           -name '_remote.repositories' \
+        -o -name '_maven.repositories' \
+        -o -name 'resolver-status.properties' \
+        -o -name '*.lastUpdated' \
+      \) -delete
+
+      # Normalize permissions so the hash doesn't depend on the builder's umask.
+      # (The recursive/NAR hash ignores mtimes, so there is no need to touch
+      # timestamps here.)
+      find "$out" -type d -exec chmod 755 {} +
+      find "$out" -type f -exec chmod 644 {} +
     '';
 
     dontFixup = true;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-JsRT4Kpr6hmjfLMLZDysa3xZB0QHffinJWhO+AwsRqE=";
+    outputHash = lib.fakeHash;
   };
 in stdenv.mkDerivation {
   pname = "kwickchat";
