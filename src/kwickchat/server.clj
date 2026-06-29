@@ -302,7 +302,7 @@
                            (filter #(str/ends-with? (str/lower-case %) ".png"))
                            (sort)
                            vec))
-                    
+
                     ;; Running from JAR (production)
                     (= protocol "jar")
                     (let [path (.getPath url)
@@ -316,7 +316,7 @@
                            (filter seq)
                            (sort)
                            vec))
-                    
+
                     :else [])]
         (json-response ex 200 {:avatars files}))
       (json-response ex 200 {:avatars []}))
@@ -351,13 +351,14 @@
       (= path "/js/main.js")  (serve-resource ex "public/js/main.js" "application/javascript; charset=utf-8")
       (= path "/wood.png")    (serve-resource ex "public/wood.png" "image/png")
       (= path "/dirt.png")    (serve-resource ex "public/dirt.png" "image/png")
+      (= path "/grass.png")   (serve-resource ex "public/grass.png" "image/png")
       (= path "/favicon.ico") (serve-resource ex "public/favicon.ico" "image/x-icon")
-      
+
       ;; Avatar images
       (str/starts-with? path "/avatars/")
       (let [filename (subs path 9)]
         (serve-resource ex (str "public/avatars/" filename) "image/png"))
-      
+
       ;; API endpoints
       (= path "/api/me")            (handle-me ex)
       (= path "/api/join")          (handle-join ex)
@@ -368,7 +369,7 @@
       (= path "/api/stream")        (handle-stream ex)
       (= path "/api/avatars")       (handle-avatars ex)
       (= path "/api/change-avatar") (handle-change-avatar ex)
-      
+
       ;; Everything else is a chat room -> serve the SPA (GET only).
       (= method "GET") (serve-index ex)
       :else (send-bytes ex 404 (.getBytes "not found") "text/plain" nil))))
@@ -395,8 +396,8 @@
                         "--db"   (recur rest (assoc acc :db v))
                         (recur (next remaining) acc)))))
         port (Integer/parseInt (or (:port arg-map)
-                                    (System/getenv "KWICKCHAT_PORT")
-                                    "5660"))
+                                   (System/getenv "KWICKCHAT_PORT")
+                                   "5660"))
         host (or (:host arg-map)
                  (System/getenv "KWICKCHAT_HOST")
                  "0.0.0.0")
