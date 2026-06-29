@@ -335,7 +335,7 @@
 
       :else
       (if-let [result (db/change-avatar! room tok avatar)]
-        (json-response ex 200 {:ok true :avatar result} (when new? tok))
+        (json-response ex 200 {:ok true :avatar (:avatar result)} (when new? tok))
         (json-response ex 403 {:ok false :error "Not a member of this room."} (when new? tok))))))
 
 ;; ---------------------------------------------------------------------------

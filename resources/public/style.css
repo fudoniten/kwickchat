@@ -227,7 +227,28 @@ input:focus { outline: none; border-color: var(--accent); }
   background: var(--stone);
   border-bottom: 1px solid var(--stone-dark);
 }
+.topbar-left { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .room-name { font-weight: 800; word-break: break-all; }
+.room-link { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.room-link-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.copy-btn {
+  flex: none;
+  background: var(--stone-light);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.copy-btn:active { transform: translateY(1px); }
 .me {
   display: inline-flex;
   align-items: center;

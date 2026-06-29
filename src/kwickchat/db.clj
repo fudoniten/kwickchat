@@ -148,8 +148,10 @@
           {:status :ok :username username :avatar avatar})))))
 
 (defn change-avatar!
-  "Update the avatar for a member identified by `cookie` in `room`.
-  Returns the new avatar on success, or nil if the member doesn't exist."
+  "Update the avatar for a member identified by `cookie` in `room`. Returns
+  {:avatar avatar} on success (where a nil avatar means the default identicon),
+  or nil if the member doesn't exist. The map wrapper lets callers tell a
+  successful reset-to-default apart from a missing member."
   [room cookie avatar]
   (locking lock
     (when (username-for room cookie)
@@ -159,7 +161,7 @@
         (.setString ps 2 room)
         (.setString ps 3 cookie)
         (.executeUpdate ps))
-      avatar)))
+      {:avatar avatar})))
 
 ;; ---------------------------------------------------------------------------
 ;; Post-it notes: one per member, joined to members so the avatar stays current.

@@ -140,6 +140,33 @@
 (defn- enc [s] (js/encodeURIComponent s))
 
 ;; ---------------------------------------------------------------------------
+;; Clipboard
+;; ---------------------------------------------------------------------------
+
+(defn- fallback-copy!
+  "Copy via a hidden textarea + execCommand — works on plain-http origins
+  where navigator.clipboard is unavailable (e.g. a home LAN without TLS)."
+  [text]
+  (let [ta (.createElement js/document "textarea")]
+    (set! (.-value ta) text)
+    (set! (.. ta -style -position) "fixed")
+    (set! (.. ta -style -opacity) "0")
+    (.appendChild (.-body js/document) ta)
+    (.select ta)
+    (try (.execCommand js/document "copy") (catch :default _))
+    (.remove ta)))
+
+(defn- copy-text!
+  "Copy `text`, then call `on-done`. Prefers the async Clipboard API and falls
+  back to execCommand on insecure origins or when the API rejects."
+  [text on-done]
+  (if-let [clip (.-clipboard js/navigator)]
+    (-> (.writeText clip text)
+        (.then on-done)
+        (.catch (fn [_] (fallback-copy! text) (on-done))))
+    (do (fallback-copy! text) (on-done))))
+
+;; ---------------------------------------------------------------------------
 ;; Scrolling / "jump to bottom" behaviour
 ;; ---------------------------------------------------------------------------
 
@@ -393,9 +420,7 @@
      (node :div {:class "landing"}
        (node :h1 {:text "kwickchat"})
        (node :p {:text "Every link is its own chat. Open one, pick a name, start talking. Share the link with your friends to chat together."})
-       (node :div {:class "slug-row"}
-         (node :span {:class "origin" :text (str (.-origin js/location) "/")})
-         input)
+       (node :div {:class "slug-row"} input)
        (node :button {:class "primary" :text "Open chat" :on-click go})))
     (.focus input)))
 
@@ -463,13 +488,20 @@
                           (clear! avatar-display)
                           (.appendChild avatar-display (avatar-or-identicon username (:avatar @state))))
         change-avatar (fn []
-                       (show-avatar-picker 
+                       (show-avatar-picker
                          (fn [new-avatar]
                            (-> (post-json "/api/change-avatar" {:room room :avatar new-avatar})
                                (.then (fn [r]
                                         (when (:ok r)
                                           (swap! state assoc :avatar new-avatar)
-                                          (update-my-avatar))))))))]
+                                          (update-my-avatar))))))))
+        room-url  (str (.-origin js/location) "/" room)
+        copy-link (fn [e]
+                    (let [btn (.-currentTarget e)]
+                      (copy-text! room-url
+                        (fn []
+                          (set! (.-textContent btn) "Copied!")
+                          (js/setTimeout #(set! (.-textContent btn) "Copy") 1500)))))]
     (.addEventListener avatar-display "click" change-avatar)
     (.addEventListener input "keydown"
                        (fn [e] (when (= (.-key e) "Enter") (.preventDefault e) (send))))
@@ -484,7 +516,11 @@
      (node :div {:class "app-layout" :id "layout"}
        (node :div {:class "chat"}
          (node :div {:class "topbar"}
-           (node :span {:class "room-name" :text room})
+           (node :div {:class "topbar-left"}
+             (node :span {:class "room-name" :text room})
+             (node :div {:class "room-link"}
+               (node :span {:class "room-link-url" :text room-url})
+               (node :button {:class "copy-btn" :text "Copy" :on-click copy-link})))
            (node :span {:class "me"}
              (node :button {:class "postits-toggle" :text "📌"
                             :on-click toggle-postits!})
