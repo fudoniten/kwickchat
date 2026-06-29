@@ -343,6 +343,8 @@
     (.focus input)))
 
 (defn enter-chat [room username]
+  ;; Set the browser tab title to the room name
+  (set! (.-title js/document) (str room " - kwickchat"))
   (let [history (node :div {:class "history" :id "history"
                             :on-scroll (fn [e] (on-scroll (.-target e)))})
         jump    (node :button {:class "jump hidden" :id "jump" :text "↓ Jump to newest"

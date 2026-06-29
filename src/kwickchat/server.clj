@@ -306,7 +306,7 @@
       (= path "/js/main.js")  (serve-resource ex "public/js/main.js" "application/javascript; charset=utf-8")
       (= path "/wood.png")    (serve-resource ex "public/wood.png" "image/png")
       (= path "/dirt.png")    (serve-resource ex "public/dirt.png" "image/png")
-      (= path "/favicon.ico") (send-bytes ex 204 (byte-array 0) "image/x-icon" nil)
+      (= path "/favicon.ico") (serve-resource ex "public/favicon.ico" "image/x-icon")
       
       ;; Avatar images
       (str/starts-with? path "/avatars/")
