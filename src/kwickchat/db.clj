@@ -26,7 +26,16 @@
       created_at INTEGER NOT NULL,
       PRIMARY KEY (room, cookie))"
    ;; A username can be reserved by exactly one cookie within a room.
-   "CREATE UNIQUE INDEX IF NOT EXISTS idx_members_room_username ON members (room, username)"])
+   "CREATE UNIQUE INDEX IF NOT EXISTS idx_members_room_username ON members (room, username)"
+   ;; One pinned "post-it" note per member (room + cookie), overwritten in place.
+   "CREATE TABLE IF NOT EXISTS notes (
+      room       TEXT    NOT NULL,
+      cookie     TEXT    NOT NULL,
+      username   TEXT    NOT NULL,
+      body       TEXT    NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (room, cookie))"
+   "CREATE INDEX IF NOT EXISTS idx_notes_room ON notes (room, updated_at)"])
 
 (defn init!
   "Open (or create) the database at `path` and ensure the schema exists."
@@ -151,3 +160,55 @@
         (.setString ps 3 cookie)
         (.executeUpdate ps))
       avatar)))
+
+;; ---------------------------------------------------------------------------
+;; Post-it notes: one per member, joined to members so the avatar stays current.
+;; ---------------------------------------------------------------------------
+
+(defn- row->note [rs]
+  {:username   (.getString rs "username")
+   :avatar     (.getString rs "avatar")
+   :body       (.getString rs "body")
+   :updated_at (.getLong rs "updated_at")})
+
+(defn notes-for
+  "All post-it notes in `room`, most recently updated first. Each note's
+  avatar is read live from the members table so it tracks avatar changes."
+  [room]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "SELECT n.username AS username, m.avatar AS avatar,
+                                  n.body AS body, n.updated_at AS updated_at
+                           FROM notes n
+                           LEFT JOIN members m
+                             ON m.room = n.room AND m.cookie = n.cookie
+                           WHERE n.room = ?
+                           ORDER BY n.updated_at DESC")]
+      (.setString ps 1 room)
+      (with-open [rs (.executeQuery ps)]
+        (loop [acc []]
+          (if (.next rs)
+            (recur (conj acc (row->note rs)))
+            acc))))))
+
+(defn set-note!
+  "Create or overwrite the note belonging to `cookie` in `room`. Only members
+  may post; returns the note map on success, or nil if not a member."
+  [room cookie body]
+  (locking lock
+    (when-let [{:keys [username avatar]} (username-for room cookie)]
+      (let [now (System/currentTimeMillis)]
+        (with-open [ps (.prepareStatement
+                        @conn "INSERT INTO notes (room, cookie, username, body, updated_at)
+                               VALUES (?,?,?,?,?)
+                               ON CONFLICT(room, cookie) DO UPDATE SET
+                                 username   = excluded.username,
+                                 body       = excluded.body,
+                                 updated_at = excluded.updated_at")]
+          (.setString ps 1 room)
+          (.setString ps 2 cookie)
+          (.setString ps 3 username)
+          (.setString ps 4 body)
+          (.setLong   ps 5 now)
+          (.executeUpdate ps))
+        {:username username :avatar avatar :body body :updated_at now}))))
