@@ -72,7 +72,7 @@
                     c     (distinct [col (- 4 col)])]
                 (svg-node :rect {:x c :y row :width 1 :height 1 :fill color}))]
     (apply svg-node :svg
-           {:class "identicon" :viewBox "0 0 5 5" :width 22 :height 22
+           {:class "identicon" :viewBox "0 0 5 5" :width 40 :height 40
             :aria-hidden "true"}
            rects)))
 
@@ -83,8 +83,8 @@
     (let [img (.createElement js/document "img")]
       (set! (.-src img) (str "/avatars/" avatar-filename))
       (set! (.-className img) "identicon")
-      (set! (.-width img) 22)
-      (set! (.-height img) 22)
+      (set! (.-width img) 40)
+      (set! (.-height img) 40)
       img)
     (identicon name)))
 
