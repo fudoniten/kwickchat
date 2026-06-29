@@ -28,6 +28,7 @@ let
     buildPhase = ''
       export HOME="$TMPDIR"
       export JAVA_TOOL_OPTIONS=
+      export SOURCE_DATE_EPOCH=1
       # Runtime deps (default basis) + the build toolchain (tools.build + cljs).
       clojure -P
       clojure -P -T:build
@@ -35,15 +36,20 @@ let
 
     installPhase = ''
       mkdir -p "$out"
-      # Strip timestamps and ensure reproducible ordering
-      find "$HOME/.m2/repository" -type f -exec touch -t 197001010000.00 {} +
-      cp -r "$HOME/.m2/repository" "$out/repository"
+      # Normalize permissions and timestamps for reproducibility
+      find "$HOME/.m2/repository" -type f -exec chmod 644 {} +
+      find "$HOME/.m2/repository" -type d -exec chmod 755 {} +
+      find "$HOME/.m2/repository" -exec touch -t 197001010000.00 {} +
+      # Sort files to ensure consistent ordering
+      (cd "$HOME/.m2" && find repository -type f | LC_ALL=C sort | tar -cf "$TMPDIR/repo.tar" -T -)
+      mkdir -p "$out"
+      tar -xf "$TMPDIR/repo.tar" -C "$out"
     '';
 
     dontFixup = true;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-NGPsNZ9rNdwN0DGqH0GFAtnQ0SQFCAeshRkaBSePXSg=";
+    outputHash = "sha256-Brtagtai5FF6K/4/EtdJT3hVS14KzO2vesCzSbs7JiY=";
   };
 in stdenv.mkDerivation {
   pname = "kwickchat";
