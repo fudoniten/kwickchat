@@ -60,7 +60,7 @@ let
     dontFixup = true;
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = lib.fakeHash;
+    outputHash = "sha256-fp4Dkfu3guMqrs94sBJ9u2vaBKMa3AShA3X5RGroJLs=";
   };
 in stdenv.mkDerivation {
   pname = "kwickchat";
