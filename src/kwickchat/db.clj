@@ -16,7 +16,8 @@
       username   TEXT    NOT NULL,
       body       TEXT    NOT NULL,
       avatar     TEXT,
-      created_at INTEGER NOT NULL)"
+      created_at INTEGER NOT NULL,
+      kind       TEXT    NOT NULL DEFAULT 'chat')"
    "CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages (room, id)"
    "CREATE TABLE IF NOT EXISTS members (
       room       TEXT    NOT NULL,
@@ -53,6 +54,10 @@
         (catch Exception _))
       (try
         (.execute st "ALTER TABLE members ADD COLUMN avatar TEXT")
+        (catch Exception _))
+      ;; Migration: tag existing rows as chat messages; join notices use 'join'.
+      (try
+        (.execute st "ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat'")
         (catch Exception _)))
     (reset! conn c)
     c))
@@ -62,26 +67,40 @@
    :username   (.getString rs "username")
    :body       (.getString rs "body")
    :avatar     (.getString rs "avatar")
-   :created_at (.getLong rs "created_at")})
+   :created_at (.getLong rs "created_at")
+   :kind       (.getString rs "kind")})
 
-(defn add-message!
-  "Persist a message and return it (with its generated id)."
-  [room username body avatar]
+(defn- insert-message!
+  "Persist a message of `kind` ('chat' or 'join') and return it with its id."
+  [room username body avatar kind]
   (locking lock
     (let [now (System/currentTimeMillis)]
       (with-open [ps (.prepareStatement
-                      @conn "INSERT INTO messages (room, username, body, avatar, created_at) VALUES (?,?,?,?,?)")]
+                      @conn "INSERT INTO messages (room, username, body, avatar, created_at, kind) VALUES (?,?,?,?,?,?)")]
         (.setString ps 1 room)
         (.setString ps 2 username)
         (.setString ps 3 body)
         (.setString ps 4 avatar)
         (.setLong   ps 5 now)
+        (.setString ps 6 kind)
         (.executeUpdate ps))
       (let [id (with-open [st (.createStatement @conn)
                            rs (.executeQuery st "SELECT last_insert_rowid()")]
                  (.next rs)
                  (.getLong rs 1))]
-        {:id id :room room :username username :body body :avatar avatar :created_at now}))))
+        {:id id :room room :username username :body body :avatar avatar
+         :created_at now :kind kind}))))
+
+(defn add-message!
+  "Persist a chat message and return it (with its generated id)."
+  [room username body avatar]
+  (insert-message! room username body avatar "chat"))
+
+(defn add-join-message!
+  "Persist a 'joined' system notice for `username` and return it. The body is a
+  plain fallback; clients compose the full '<name> has joined' line themselves."
+  [room username avatar]
+  (insert-message! room username "joined" avatar "join"))
 
 (defn messages-since
   "Return up to `limit` messages in `room` with id greater than `since`,
@@ -89,7 +108,7 @@
   [room since limit]
   (locking lock
     (with-open [ps (.prepareStatement
-                    @conn "SELECT id, username, body, avatar, created_at FROM messages
+                    @conn "SELECT id, username, body, avatar, created_at, kind FROM messages
                            WHERE room = ? AND id > ? ORDER BY id ASC LIMIT ?")]
       (.setString ps 1 room)
       (.setLong   ps 2 since)
@@ -124,18 +143,22 @@
 (defn claim-username!
   "Try to reserve `username` in `room` for `cookie`.
 
-  Returns a map {:status ... :username ... :avatar ...} where status is one of:
+  Returns a map {:status ... :username ... :avatar ... :new? ...} where status
+  is one of:
     :ok             - reserved (or this cookie already owns this name)
     :already-claimed- this cookie already owns a *different* name here
-    :taken          - the name belongs to someone else"
+    :taken          - the name belongs to someone else
+  and :new? is true only when this call actually created a new member (a fresh
+  join), so callers can announce it without re-announcing reconnects."
   [room cookie username avatar]
   (locking lock
     (if-let [existing (username-for room cookie)]
       {:status (if (= (:username existing) username) :ok :already-claimed)
        :username (:username existing)
-       :avatar (:avatar existing)}
+       :avatar (:avatar existing)
+       :new? false}
       (if (username-taken? room username)
-        {:status :taken :username nil :avatar nil}
+        {:status :taken :username nil :avatar nil :new? false}
         (do
           (with-open [ps (.prepareStatement
                           @conn "INSERT INTO members (room, cookie, username, avatar, created_at) VALUES (?,?,?,?,?)")]
@@ -145,7 +168,7 @@
             (.setString ps 4 avatar)
             (.setLong   ps 5 (System/currentTimeMillis))
             (.executeUpdate ps))
-          {:status :ok :username username :avatar avatar})))))
+          {:status :ok :username username :avatar avatar :new? true})))))
 
 (defn change-avatar!
   "Update the avatar for a member identified by `cookie` in `room`.

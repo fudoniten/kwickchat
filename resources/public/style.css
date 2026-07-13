@@ -340,6 +340,30 @@ input:focus {
   color: var(--ink);
 }
 
+/* Join notice: a centred pill, deliberately unlike a chat bubble so it reads
+   as an event ("who's here") rather than something someone said. */
+.msg-join {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 85%;
+  margin: 2px 0;
+  padding: 4px 12px;
+  border: 1px solid var(--stone-dark);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.msg-join .identicon {
+  width: 22px;
+  height: 22px;
+}
+.msg-join-name {
+  font-weight: 700;
+  color: var(--ink);
+}
+
 /* Per-user pixel-icon, hashed from the username. */
 .identicon {
   flex: none;
