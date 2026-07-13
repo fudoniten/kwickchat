@@ -34,9 +34,9 @@ in
       type = lib.types.path;
       default = "/var/lib/kwickchat";
       description = ''
-        Directory holding the SQLite database. With the default value systemd's
-        StateDirectory manages it automatically; if you change it, make sure the
-        service can write there.
+        State directory holding all persistent data (the SQLite database). With
+        the default value systemd's StateDirectory manages it automatically; if
+        you change it, make sure the service can write there.
       '';
     };
 
@@ -56,7 +56,7 @@ in
       environment = {
         KWICKCHAT_HOST = cfg.host;
         KWICKCHAT_PORT = toString cfg.port;
-        KWICKCHAT_DB = "${cfg.dataDir}/kwickchat.db";
+        KWICKCHAT_DIR = cfg.dataDir;
       };
 
       serviceConfig = {
