@@ -385,15 +385,18 @@
                (catch Exception _)))))))
 
 (defn -main [& args]
-  (let [;; Parse command-line args: --port <num>, --host <addr>, --db <path>
+  (let [;; Parse command-line args: --port <num>, --host <addr>,
+        ;; --dir <path> (state directory), --db <path> (explicit db override).
         arg-map (loop [remaining args, acc {}]
                   (if (empty? remaining)
                     acc
                     (let [[k v & rest] remaining]
                       (case k
-                        "--port" (recur rest (assoc acc :port v))
-                        "--host" (recur rest (assoc acc :host v))
-                        "--db"   (recur rest (assoc acc :db v))
+                        "--port"      (recur rest (assoc acc :port v))
+                        "--host"      (recur rest (assoc acc :host v))
+                        "--dir"       (recur rest (assoc acc :dir v))
+                        "--state-dir" (recur rest (assoc acc :dir v))
+                        "--db"        (recur rest (assoc acc :db v))
                         (recur (next remaining) acc)))))
         port (Integer/parseInt (or (:port arg-map)
                                    (System/getenv "KWICKCHAT_PORT")
@@ -401,10 +404,21 @@
         host (or (:host arg-map)
                  (System/getenv "KWICKCHAT_HOST")
                  "0.0.0.0")
+        ;; Directory holding all persistent state. Everything the server needs
+        ;; to survive a restart lives under here (currently just the SQLite db).
+        state-dir (or (:dir arg-map)
+                      (System/getenv "KWICKCHAT_DIR")
+                      "/var/lib/kwickchat")
+        ;; The db lives inside the state dir; an explicit --db / KWICKCHAT_DB
+        ;; still wins as a full-path override for unusual setups.
         db-path (or (:db arg-map)
                     (System/getenv "KWICKCHAT_DB")
-                    "kwickchat.db")
+                    (str (io/file state-dir "kwickchat.db")))
         server (HttpServer/create (InetSocketAddress. host (int port)) 0)]
+    ;; Make sure the state directory exists before SQLite tries to open the
+    ;; file — SQLite creates the db file but not its parent directories.
+    (when-let [parent (.getParentFile (io/file db-path))]
+      (.mkdirs parent))
     (db/init! db-path)
     (.createContext server "/" (handler))
     (.setExecutor server (Executors/newCachedThreadPool))

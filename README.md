@@ -66,24 +66,32 @@ Requires a JDK and the [Clojure CLI](https://clojure.org/guides/install_clojure)
 # Build the ClojureScript bundle + a runnable uberjar
 clojure -T:build uber
 
-# Run it (defaults: host 0.0.0.0, port 8080, db ./kwickchat.db)
-java -jar target/kwickchat.jar
+# Run it (defaults: host 0.0.0.0, port 8080, state dir /var/lib/kwickchat)
+# For local hacking, point the state dir somewhere you can write:
+java -jar target/kwickchat.jar --dir ./state
 
 # …then open http://localhost:8080/your-room-name
 ```
 
 While iterating you can rebuild just the frontend with `clojure -T:build cljs`
-and run the server from source with `clojure -M:run`.
+and run the server from source with `clojure -M:run --dir ./state` (any writable
+directory — the default `/var/lib/kwickchat` usually needs root).
 
 ### Configuration
 
-The server reads three environment variables:
+The server reads these environment variables, each overridable by a matching
+command-line flag (`--host`, `--port`, `--dir`, `--db`), which take precedence:
 
-| Variable         | Default        | Meaning                          |
-|------------------|----------------|----------------------------------|
-| `KWICKCHAT_HOST` | `0.0.0.0`      | Address to bind                  |
-| `KWICKCHAT_PORT` | `8080`         | Port to listen on                |
-| `KWICKCHAT_DB`   | `kwickchat.db` | Path to the SQLite database file |
+| Variable         | Flag     | Default             | Meaning                                              |
+|------------------|----------|---------------------|------------------------------------------------------|
+| `KWICKCHAT_HOST` | `--host` | `0.0.0.0`           | Address to bind                                      |
+| `KWICKCHAT_PORT` | `--port` | `8080`              | Port to listen on                                    |
+| `KWICKCHAT_DIR`  | `--dir`  | `/var/lib/kwickchat`| State directory for all persistent data              |
+| `KWICKCHAT_DB`   | `--db`   | `$KWICKCHAT_DIR/kwickchat.db` | Explicit path to the SQLite file (overrides the state dir) |
+
+All state that needs to survive a restart lives under the state directory — at
+present that's the single SQLite database (`kwickchat.db`). The directory is
+created on startup if it doesn't exist.
 
 ## Deploy on NixOS
 
@@ -104,6 +112,7 @@ The flake exposes a package and a NixOS module.
             enable = true;
             host = "127.0.0.1";   # sit behind a reverse proxy for TLS
             port = 8080;
+            # state-directory = "/var/lib/kwickchat"; # persistent data location
             # openFirewall = true; # only if you expose it directly
           };
         }
@@ -113,10 +122,12 @@ The flake exposes a package and a NixOS module.
 }
 ```
 
-The module runs the server as a hardened `DynamicUser` systemd service and keeps
-the database in `/var/lib/kwickchat`. Front it with nginx/Caddy for HTTPS — SSE
-works through a normal reverse proxy as long as response buffering is off (the
-server already sends `X-Accel-Buffering: no` for nginx).
+The module runs the server as a hardened systemd service under a dedicated
+`kwickchat` system user and keeps the database in `state-directory` (default
+`/var/lib/kwickchat`, created on activation). Point `state-directory` at any
+persistent location you like. Front it with nginx/Caddy for HTTPS — SSE works
+through a normal reverse proxy as long as response buffering is off (the server
+already sends `X-Accel-Buffering: no` for nginx).
 
 ### One-time hash step
 

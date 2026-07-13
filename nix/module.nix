@@ -30,14 +30,26 @@ in
       description = "TCP port to listen on.";
     };
 
-    dataDir = lib.mkOption {
+    state-directory = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/kwickchat";
       description = ''
-        Directory holding the SQLite database. With the default value systemd's
-        StateDirectory manages it automatically; if you change it, make sure the
-        service can write there.
+        Directory holding all persistent data (the SQLite database). Must be on
+        persistent storage. It is created on activation, owned by the service
+        user, so it may live anywhere the host keeps state (e.g. /state/...).
       '';
+    };
+
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "kwickchat";
+      description = "User account under which the server runs and owns its state.";
+    };
+
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "kwickchat";
+      description = "Group under which the server runs.";
     };
 
     openFirewall = lib.mkOption {
@@ -48,6 +60,24 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # A stable system user so the state directory keeps consistent ownership
+    # across restarts — a dynamic user can't own persistent state on /state.
+    users.users = lib.mkIf (cfg.user == "kwickchat") {
+      kwickchat = {
+        isSystemUser = true;
+        group = cfg.group;
+        description = "kwickchat chat server";
+      };
+    };
+    users.groups = lib.mkIf (cfg.group == "kwickchat") {
+      kwickchat = { };
+    };
+
+    # Create the state directory (and any parents) owned by the service user.
+    systemd.tmpfiles.rules = [
+      "d ${cfg.state-directory} 0750 ${cfg.user} ${cfg.group} - -"
+    ];
+
     systemd.services.kwickchat = {
       description = "kwickchat chat server";
       wantedBy = [ "multi-user.target" ];
@@ -56,7 +86,7 @@ in
       environment = {
         KWICKCHAT_HOST = cfg.host;
         KWICKCHAT_PORT = toString cfg.port;
-        KWICKCHAT_DB = "${cfg.dataDir}/kwickchat.db";
+        KWICKCHAT_DIR = cfg.state-directory;
       };
 
       serviceConfig = {
@@ -64,9 +94,9 @@ in
         Restart = "on-failure";
         RestartSec = 2;
 
-        DynamicUser = true;
-        StateDirectory = "kwickchat";
-        WorkingDirectory = cfg.dataDir;
+        User = cfg.user;
+        Group = cfg.group;
+        WorkingDirectory = cfg.state-directory;
 
         # Hardening
         NoNewPrivileges = true;
@@ -74,7 +104,7 @@ in
         ProtectHome = true;
         PrivateTmp = true;
         PrivateDevices = true;
-        ReadWritePaths = [ cfg.dataDir ];
+        ReadWritePaths = [ cfg.state-directory ];
         RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
         RestrictNamespaces = true;
         LockPersonality = true;
