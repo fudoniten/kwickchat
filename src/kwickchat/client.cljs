@@ -279,15 +279,40 @@
 ;; keyed by username (unique within a room) and arrive live over SSE.
 ;; ---------------------------------------------------------------------------
 
-(defn- postit-node [{:keys [username avatar body]}]
-  (let [name (str username)
-        card (node :div {:class "postit"})]
+(def ^:private weekdays
+  ["Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat"])
+
+(def ^:private months
+  ["January" "February" "March" "April" "May" "June" "July"
+   "August" "September" "October" "November" "December"])
+
+(defn- format-note-date
+  "Kid-friendly short date for a post-it, e.g. \"Sat, July 11\" (no year)."
+  [ms]
+  (let [d (js/Date. ms)]
+    (str (get weekdays (.getDay d)) ", "
+         (get months (.getMonth d)) " " (.getDate d))))
+
+(def ^:private week-ms (* 7 24 60 60 1000))
+
+(defn- stale-note?
+  "Post-its older than a week are probably forgotten, but still useful — fade them."
+  [ms]
+  (and ms (> (- (js/Date.now) ms) week-ms)))
+
+(defn- postit-node [{:keys [username avatar body updated_at]}]
+  (let [name  (str username)
+        stale (stale-note? updated_at)
+        card  (node :div {:class (if stale "postit stale" "postit")})]
     ;; Tint the note with the poster's stable hashed colour.
     (set! (.. card -style -backgroundColor) (user-color name))
     (.appendChild card
       (node :div {:class "postit-head"}
         (avatar-or-identicon name avatar)
-        (node :span {:class "postit-user" :text name})))
+        (node :span {:class "postit-user" :text name})
+        (when updated_at
+          (node :span {:class "postit-date"
+                       :text (format-note-date updated_at)}))))
     (.appendChild card (node :div {:class "postit-body" :text (str body)}))
     card))
 

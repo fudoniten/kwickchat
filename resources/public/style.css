@@ -473,6 +473,20 @@ input:focus {
   font-weight: 700;
   font-size: 0.85rem;
 }
+/* Small, muted date pinned to the top-right so it never reads as note content. */
+.postit-date {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 600;
+  opacity: 0.6;
+  white-space: nowrap;
+  padding-left: 6px;
+}
+/* Notes older than a week fade out — likely stale, but the fade is itself a hint. */
+.postit.stale {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
 .postit-body {
   white-space: pre-wrap;
   word-wrap: break-word;
