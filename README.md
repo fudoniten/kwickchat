@@ -112,6 +112,7 @@ The flake exposes a package and a NixOS module.
             enable = true;
             host = "127.0.0.1";   # sit behind a reverse proxy for TLS
             port = 8080;
+            # state-directory = "/var/lib/kwickchat"; # persistent data location
             # openFirewall = true; # only if you expose it directly
           };
         }
@@ -121,10 +122,12 @@ The flake exposes a package and a NixOS module.
 }
 ```
 
-The module runs the server as a hardened `DynamicUser` systemd service and keeps
-the database in `/var/lib/kwickchat`. Front it with nginx/Caddy for HTTPS — SSE
-works through a normal reverse proxy as long as response buffering is off (the
-server already sends `X-Accel-Buffering: no` for nginx).
+The module runs the server as a hardened systemd service under a dedicated
+`kwickchat` system user and keeps the database in `state-directory` (default
+`/var/lib/kwickchat`, created on activation). Point `state-directory` at any
+persistent location you like. Front it with nginx/Caddy for HTTPS — SSE works
+through a normal reverse proxy as long as response buffering is off (the server
+already sends `X-Accel-Buffering: no` for nginx).
 
 ### One-time hash step
 
