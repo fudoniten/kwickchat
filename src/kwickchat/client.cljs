@@ -186,6 +186,34 @@
       (node :span {:class "msg-body" :text (str body)}))
     msg-div))
 
+(defonce ^:private audio-ctx (atom nil))
+
+(defn- get-audio-ctx []
+  (when-let [ctor (or (.-AudioContext js/window) (.-webkitAudioContext js/window))]
+    (or @audio-ctx (reset! audio-ctx (new ctor)))))
+
+(defn- play-ding!
+  "A short, subtle two-tone chime for incoming messages. Best-effort: browsers
+  that block audio before a user gesture (or lack Web Audio) just stay silent."
+  []
+  (try
+    (when-let [ctx (get-audio-ctx)]
+      (when (= (.-state ctx) "suspended") (.resume ctx))
+      (doseq [[freq offset] [[880 0] [1318.5 0.09]]]
+        (let [now  (+ (.-currentTime ctx) offset)
+              osc  (.createOscillator ctx)
+              gain (.createGain ctx)]
+          (set! (.-type osc) "sine")
+          (.setValueAtTime (.-frequency osc) freq now)
+          (.setValueAtTime (.-gain gain) 0 now)
+          (.linearRampToValueAtTime (.-gain gain) 0.12 (+ now 0.01))
+          (.exponentialRampToValueAtTime (.-gain gain) 0.0001 (+ now 0.25))
+          (.connect osc gain)
+          (.connect gain (.-destination ctx))
+          (.start osc now)
+          (.stop osc (+ now 0.25)))))
+    (catch :default _)))
+
 (defn- append-message [{:keys [id username body avatar kind]}]
   (when-let [h (by-id "history")]
     (let [name (str username)]
@@ -210,7 +238,10 @@
           (fn [ev]
             (let [msg (js->clj (js/JSON.parse (.-data ev)) :keywordize-keys true)]
               (when (> (:id msg) (:last-id @state))
-                (append-message msg)))))
+                (append-message msg)
+                (when (and (= (:kind msg) "chat")
+                           (not= (:username msg) (:username @state)))
+                  (play-ding!))))))
     ;; Post-it updates ride the same stream under a named "note" event.
     (.addEventListener src "note"
           (fn [ev]
