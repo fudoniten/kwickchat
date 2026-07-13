@@ -177,9 +177,18 @@
       (json-response ex 400 {:ok false :error "Use 1–24 letters, numbers, spaces, - or _."} (when new? tok))
 
       :else
-      (let [{:keys [status username]} (db/claim-username! room tok name avatar)]
+      (let [{:keys [status username] joined? :new?}
+            (db/claim-username! room tok name avatar)]
         (case status
-          (:ok :already-claimed) (json-response ex 200 {:ok true :username username} (when new? tok))
+          (:ok :already-claimed)
+          (do
+            ;; Announce genuinely new members (not reconnects) so nobody can
+            ;; slip into a kids' room and lurk unseen.
+            (when joined?
+              (let [msg (db/add-join-message! room username avatar)]
+                (log-content! "join" room username "joined")
+                (broadcast! room msg)))
+            (json-response ex 200 {:ok true :username username} (when new? tok)))
           :taken (json-response ex 409 {:ok false :error "That name is taken here — pick another."} (when new? tok)))))))
 
 (defn- handle-messages [^HttpExchange ex]

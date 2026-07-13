@@ -164,21 +164,34 @@
 ;; Messages
 ;; ---------------------------------------------------------------------------
 
-(defn- append-message [{:keys [id username body avatar]}]
+(defn- join-node
+  "A centred, non-bubble system notice: avatar + \"<name> has joined\"."
+  [name avatar]
+  (node :div {:class "msg-join"}
+    (avatar-or-identicon name avatar)
+    (node :span {:class "msg-join-text"}
+      (node :span {:class "msg-join-name" :text name})
+      " has joined")))
+
+(defn- chat-node [name body avatar]
+  (let [is-mine (= name (:username @state))
+        msg-div (node :div {:class (if is-mine "msg msg-mine" "msg")})]
+    ;; Set per-user bubble background color
+    (set! (.. msg-div -style -backgroundColor) (user-bubble-color name))
+    (.appendChild msg-div
+      (node :span {:class "msg-head"}
+        (avatar-or-identicon name avatar)
+        (node :span {:class "msg-user" :text name})))
+    (.appendChild msg-div
+      (node :span {:class "msg-body" :text (str body)}))
+    msg-div))
+
+(defn- append-message [{:keys [id username body avatar kind]}]
   (when-let [h (by-id "history")]
-    (let [name (str username)
-          is-mine (= name (:username @state))
-          msg-class (if is-mine "msg msg-mine" "msg")
-          msg-div (node :div {:class msg-class})]
-      ;; Set per-user bubble background color
-      (set! (.. msg-div -style -backgroundColor) (user-bubble-color name))
-      (.appendChild msg-div
-        (node :span {:class "msg-head"} 
-          (avatar-or-identicon name avatar)
-          (node :span {:class "msg-user" :text name})))
-      (.appendChild msg-div
-        (node :span {:class "msg-body" :text (str body)}))
-      (.appendChild h msg-div))
+    (let [name (str username)]
+      (.appendChild h (if (= kind "join")
+                        (join-node name avatar)
+                        (chat-node name body avatar))))
     (swap! state update :last-id max id)
     (if (:stick @state)
       (scroll-bottom!)
