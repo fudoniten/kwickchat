@@ -36,7 +36,16 @@
       body       TEXT    NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (room, cookie))"
-   "CREATE INDEX IF NOT EXISTS idx_notes_room ON notes (room, updated_at)"])
+   "CREATE INDEX IF NOT EXISTS idx_notes_room ON notes (room, updated_at)"
+   ;; Optional per-member push target: an ntfy topic to buzz while they're away.
+   "CREATE TABLE IF NOT EXISTS notifiers (
+      room       TEXT    NOT NULL,
+      cookie     TEXT    NOT NULL,
+      username   TEXT    NOT NULL,
+      topic      TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (room, cookie))"
+   "CREATE INDEX IF NOT EXISTS idx_notifiers_room ON notifiers (room)"])
 
 (defn init!
   "Open (or create) the database at `path` and ensure the schema exists."
@@ -235,3 +244,68 @@
           (.setLong   ps 5 now)
           (.executeUpdate ps))
         {:username username :avatar avatar :body body :updated_at now}))))
+
+;; ---------------------------------------------------------------------------
+;; Notifiers: one optional push target per member, so they can be told about
+;; messages they missed while away. Set up and torn down by the member alone —
+;; there's nothing here a grown-up has to configure per kid.
+;; ---------------------------------------------------------------------------
+
+(defn notifier-for
+  "The push topic this `cookie` has registered in `room`, or nil."
+  [room cookie]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "SELECT topic FROM notifiers WHERE room = ? AND cookie = ?")]
+      (.setString ps 1 room)
+      (.setString ps 2 cookie)
+      (with-open [rs (.executeQuery ps)]
+        (when (.next rs)
+          {:topic (.getString rs 1)})))))
+
+(defn notifiers-for
+  "Every registered push target in `room`, as {:cookie :username :topic} maps."
+  [room]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "SELECT cookie, username, topic FROM notifiers WHERE room = ?")]
+      (.setString ps 1 room)
+      (with-open [rs (.executeQuery ps)]
+        (loop [acc []]
+          (if (.next rs)
+            (recur (conj acc {:cookie   (.getString rs 1)
+                              :username (.getString rs 2)
+                              :topic    (.getString rs 3)}))
+            acc))))))
+
+(defn set-notifier!
+  "Register (or replace) the push topic belonging to `cookie` in `room`. Only
+  members may register; returns the topic on success, or nil if not a member."
+  [room cookie topic]
+  (locking lock
+    (when-let [{:keys [username]} (username-for room cookie)]
+      (with-open [ps (.prepareStatement
+                      @conn "INSERT INTO notifiers (room, cookie, username, topic, created_at)
+                             VALUES (?,?,?,?,?)
+                             ON CONFLICT(room, cookie) DO UPDATE SET
+                               username   = excluded.username,
+                               topic      = excluded.topic,
+                               created_at = excluded.created_at")]
+        (.setString ps 1 room)
+        (.setString ps 2 cookie)
+        (.setString ps 3 username)
+        (.setString ps 4 topic)
+        (.setLong   ps 5 (System/currentTimeMillis))
+        (.executeUpdate ps))
+      topic)))
+
+(defn clear-notifier!
+  "Forget the push topic belonging to `cookie` in `room`."
+  [room cookie]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "DELETE FROM notifiers WHERE room = ? AND cookie = ?")]
+      (.setString ps 1 room)
+      (.setString ps 2 cookie)
+      (.executeUpdate ps))
+    nil))

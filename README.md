@@ -26,8 +26,45 @@ social logins. Just a link and a name.
   characters); it's tinted with their colour and stamped with their avatar so
   it's clear who posted it. Notes persist and update live for everyone. On
   phones the panel is a slide-over toggled with the 📌 button.
+- **Unread badge.** While the tab is in the background, missed messages are
+  counted on the favicon, the tab title, and the app icon where the browser
+  supports one. It clears the moment you look at the tab again.
+- **Away notifications.** Each member can opt into a phone notification for
+  messages they miss while they're not at the keyboard — see below.
 
 Rooms are unguessable links shared only among friends — keep the link private.
+
+### Getting pinged when you're away
+
+The badge only helps if the browser is open. For "someone messaged you an hour
+ago and you were outside", kwickchat can push to your phone through
+[ntfy](https://ntfy.sh) — which suits this site because it needs no account and
+no email, exactly like the rest of kwickchat. **Each person sets this up for
+themselves**, in the room, with no help from whoever runs the server:
+
+1. Hit the 🔕 button in the top bar.
+2. Install the ntfy app (Android / iPhone / F-Droid links are in the dialog),
+   or just leave `ntfy.sh/<your-topic>` open in a browser tab.
+3. Subscribe to the topic kwickchat suggests — a random one like
+   `kwick-3f9a1c02b7d5`, because **the topic name is the only secret**. Anyone
+   who knows it can send you notifications, so treat it like the room link.
+4. Hit Save. A test notification arrives immediately, which is the only real
+   way to know the phone half of the setup worked.
+
+After that you get a notification when **all** of these are true:
+
+- somebody else posts a chat message in that room,
+- you haven't been at the keyboard for two minutes, and
+- you haven't already been notified in the last five minutes.
+
+That last rule matters: a burst of thirty messages is one buzz, not thirty. The
+page tells the server "I'm still here" while it's visible and stops the moment
+it isn't, so a tab left open overnight does **not** count as being present.
+Tapping the notification opens the room (once `KWICKCHAT_URL` is set). Hit 🔔
+again to change the topic or turn it off.
+
+Settings live per room, per browser — they hang off the same cookie as your
+username, so clearing cookies means setting notifications up again.
 
 ### Moderation log
 
@@ -88,10 +125,19 @@ command-line flag (`--host`, `--port`, `--dir`, `--db`), which take precedence:
 | `KWICKCHAT_PORT` | `--port` | `8080`              | Port to listen on                                    |
 | `KWICKCHAT_DIR`  | `--dir`  | `/var/lib/kwickchat`| State directory for all persistent data              |
 | `KWICKCHAT_DB`   | `--db`   | `$KWICKCHAT_DIR/kwickchat.db` | Explicit path to the SQLite file (overrides the state dir) |
+| `KWICKCHAT_NTFY` | `--ntfy` | `https://ntfy.sh`   | ntfy server for away notifications; set it empty to switch them off |
+| `KWICKCHAT_URL`  | `--url`  | *(none)*            | This site's public URL, so notifications link back to the room |
 
 All state that needs to survive a restart lives under the state directory — at
 present that's the single SQLite database (`kwickchat.db`). The directory is
 created on startup if it doesn't exist.
+
+Note that the ntfy **server** is deliberately an operator setting, not a
+per-user one: kwickchat POSTs to it, so letting a visitor name any host would
+turn the server into an open request relay. Members choose only their topic.
+Point `KWICKCHAT_NTFY` at your own ntfy instance if you'd rather not route
+notifications through the public one — kwickchat contacts it only for members
+who have opted in.
 
 ## Deploy on NixOS
 
@@ -112,7 +158,9 @@ The flake exposes a package and a NixOS module.
             enable = true;
             host = "127.0.0.1";   # sit behind a reverse proxy for TLS
             port = 8080;
+            public-url = "https://chat.example.com"; # makes notifications tappable
             # state-directory = "/var/lib/kwickchat"; # persistent data location
+            # ntfy-server = "https://ntfy.sh";  # "" turns away notifications off
             # openFirewall = true; # only if you expose it directly
           };
         }
@@ -128,6 +176,10 @@ The module runs the server as a hardened systemd service under a dedicated
 persistent location you like. Front it with nginx/Caddy for HTTPS — SSE works
 through a normal reverse proxy as long as response buffering is off (the server
 already sends `X-Accel-Buffering: no` for nginx).
+
+Set `public-url` to whatever address your users actually type, so away
+notifications can link back to the room; `ntfy-server` picks where those
+notifications go (`""` removes the feature from the UI).
 
 ### One-time hash step
 
@@ -150,8 +202,9 @@ Copy the `got:` value into `outputHash` in [`nix/package.nix`](nix/package.nix)
 ```
 deps.edn                     deps + build/run aliases
 build.clj                    tools.build: cljs compile + uberjar
-src/kwickchat/server.clj     HTTP server, routing, SSE, cookies
+src/kwickchat/server.clj     HTTP server, routing, SSE, cookies, presence
 src/kwickchat/db.clj         SQLite persistence
+src/kwickchat/notify.clj     away notifications over ntfy
 src/kwickchat/client.cljs    the entire front end
 resources/public/            index.html + style.css (main.js is built)
 flake.nix, nix/              Nix package + NixOS module

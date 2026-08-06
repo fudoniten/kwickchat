@@ -93,7 +93,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce state (atom {:room nil :username nil :avatar nil :last-id 0 :stick true
-                      :avatars [] :notes {}}))
+                      :avatars [] :notes {} :notify {}}))
 
 (declare enter-chat upsert-note!)
 
@@ -214,6 +214,97 @@
           (.stop osc (+ now 0.25)))))
     (catch :default _)))
 
+;; ---------------------------------------------------------------------------
+;; Unread badge: while the tab is in the background, count what you're missing
+;; and show it on the favicon, the tab title, and the app icon where the
+;; browser has one. This is the "you're still in the browser" half of catching
+;; up; the away-from-keyboard half is push notifications, further down.
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private unread (atom 0))
+
+(defonce ^:private base-icon
+  (let [img (js/Image.)]
+    (set! (.-src img) "/favicon.ico")
+    img))
+
+(defn- watching?
+  "True when this tab is on screen *and* focused — otherwise anything arriving
+  counts as unread."
+  []
+  (and (not (.-hidden js/document)) (.hasFocus js/document)))
+
+(defn- icon-link []
+  (or (.querySelector js/document "link[rel~='icon']")
+      (let [l (.createElement js/document "link")]
+        (.setAttribute l "rel" "icon")
+        (.appendChild (.-head js/document) l)
+        l)))
+
+(defn- badge-favicon!
+  "Redraw the favicon with `n` tagged in the corner; n=0 restores the plain one."
+  [n]
+  (try
+    (let [l (icon-link)]
+      (if (zero? n)
+        (.setAttribute l "href" "/favicon.ico")
+        (let [c (.createElement js/document "canvas")
+              g (do (set! (.-width c) 64) (set! (.-height c) 64)
+                    (.getContext c "2d"))]
+          ;; Start from the real favicon when it has loaded, else a plain
+          ;; grass-green tile so the badge still has something to sit on.
+          (if (and (.-complete base-icon) (pos? (.-naturalWidth base-icon)))
+            (.drawImage g base-icon 0 0 64 64)
+            (do (set! (.-fillStyle g) "#5cab3f")
+                (.fillRect g 0 0 64 64)))
+          (set! (.-fillStyle g) "#d64541")
+          (.beginPath g)
+          (.arc g 43 43 21 0 (* 2 js/Math.PI))
+          (.fill g)
+          (set! (.-fillStyle g) "#ffffff")
+          (set! (.-font g) "bold 28px system-ui, sans-serif")
+          (set! (.-textAlign g) "center")
+          (set! (.-textBaseline g) "middle")
+          (.fillText g (if (> n 9) "9+" (str n)) 43 45)
+          (.setAttribute l "href" (.toDataURL c "image/png")))))
+    (catch :default _)))
+
+(defn- app-badge!
+  "Badge the installed-app icon, on the browsers that have that API."
+  [n]
+  (try
+    (let [nav js/navigator
+          ;; Reached by string so advanced compilation can't rename it away.
+          f (aget nav (if (pos? n) "setAppBadge" "clearAppBadge"))]
+      (when f (if (pos? n) (.call f nav n) (.call f nav))))
+    (catch :default _)))
+
+(defn- refresh-badges! []
+  (let [n @unread]
+    (set! (.-title js/document)
+          (str (when (pos? n) (str "(" n ") ")) (:room @state) " - kwickchat"))
+    (badge-favicon! n)
+    (app-badge! n)))
+
+(defn- note-unread! []
+  (swap! unread inc)
+  (refresh-badges!))
+
+(defn- clear-unread! []
+  (when (pos? @unread)
+    (reset! unread 0)
+    (refresh-badges!)))
+
+;; ---------------------------------------------------------------------------
+;; Presence: tell the server we're actually here, so it knows when we're not.
+;; Silence for a couple of minutes is what turns a message into a phone push.
+;; ---------------------------------------------------------------------------
+
+(defn- ping-active! [room]
+  (when-not (.-hidden js/document)
+    (-> (post-json "/api/active" {:room room})
+        (.catch (fn [_] nil)))))
+
 (defn- append-message [{:keys [id username body avatar kind]}]
   (when-let [h (by-id "history")]
     (let [name (str username)]
@@ -239,9 +330,9 @@
             (let [msg (js->clj (js/JSON.parse (.-data ev)) :keywordize-keys true)]
               (when (> (:id msg) (:last-id @state))
                 (append-message msg)
-                (when (and (= (:kind msg) "chat")
-                           (not= (:username msg) (:username @state)))
-                  (play-ding!))))))
+                (when (not= (:username msg) (:username @state))
+                  (when (= (:kind msg) "chat") (play-ding!))
+                  (when-not (watching?) (note-unread!)))))))
     ;; Post-it updates ride the same stream under a named "note" event.
     (.addEventListener src "note"
           (fn [ev]
@@ -443,6 +534,116 @@
                      :on-click (fn [] (show-note-composer room))}))))
 
 ;; ---------------------------------------------------------------------------
+;; Away notifications: a phone buzz for messages you miss while you're not at
+;; the keyboard, delivered by ntfy (https://ntfy.sh) — no account, no email, in
+;; keeping with the rest of the site. You invent a topic name, subscribe to it
+;; in the ntfy app, and tell kwickchat what it is. The topic is a secret, just
+;; like the room link, so we suggest a random one.
+;; ---------------------------------------------------------------------------
+
+(defn- hex2 [n]
+  (let [s (.toString n 16)] (if (= 1 (count s)) (str "0" s) s)))
+
+(defn- random-topic
+  "A topic nobody is going to guess — anyone who knows it can notify you."
+  []
+  (let [bytes (js/Uint8Array. 6)]
+    (if-let [c (.-crypto js/window)]
+      (.getRandomValues c bytes)
+      (dotimes [i 6] (aset bytes i (rand-int 256))))
+    (str "kwick-" (str/join (map #(hex2 (aget bytes %)) (range 6))))))
+
+(defn- link [href text]
+  (let [a (node :a {:class "notify-link" :text text})]
+    (.setAttribute a "href" href)
+    (.setAttribute a "target" "_blank")
+    (.setAttribute a "rel" "noopener noreferrer")
+    a))
+
+(defn- refresh-notify-btn! []
+  (when-let [b (by-id "notify-btn")]
+    (let [{:keys [available topic]} (:notify @state)]
+      (set! (.. b -style -display) (if available "inline-flex" "none"))
+      (set! (.-textContent b) (if topic "🔔" "🔕"))
+      (.setAttribute b "title" (if topic
+                                 "Away notifications are on"
+                                 "Get notified when you're away")))))
+
+(defn- show-notify-modal [room]
+  (let [{:keys [server topic]} (:notify @state)
+        overlay  (node :div {:class "avatar-picker-overlay"})
+        modal    (node :div {:class "note-modal notify-modal"})
+        input    (node :input {:class "notify-topic" :value (or topic (random-topic))})
+        web-link (link (str server "/" (.-value input)) "watch it in a browser tab")
+        err      (node :div {:class "error"})
+        close    (fn [] (.remove overlay))
+        finish   (fn [t]
+                   (swap! state assoc-in [:notify :topic] t)
+                   (refresh-notify-btn!)
+                   (close))
+        save     (fn []
+                   (let [t (str/trim (.-value input))]
+                     (-> (post-json "/api/notify" {:room room :topic t})
+                         (.then (fn [r]
+                                  (if (:ok r)
+                                    (finish (:topic r))
+                                    (set! (.-textContent err)
+                                          (or (:error r) "Could not save."))))))))
+        turn-off (fn []
+                   (-> (post-json "/api/notify" {:room room :topic ""})
+                       (.then (fn [_] (finish nil)))))
+        copy     (fn []
+                   (.select input)
+                   (try
+                     (when-let [cb (aget js/navigator "clipboard")]
+                       (.call (aget cb "writeText") cb (.-value input)))
+                     (catch :default _)))]
+    ;; Keep the "watch in a browser" link pointed at whatever they've typed.
+    (.addEventListener input "input"
+                       (fn [] (.setAttribute web-link "href"
+                                             (str server "/" (str/trim (.-value input))))))
+    (.addEventListener input "keydown"
+                       (fn [e] (when (= (.-key e) "Enter") (.preventDefault e) (save))))
+    (.appendChild modal (node :h3 {:text "🔔 Buzz me when I'm away"}))
+    (.appendChild modal
+      (node :p {:text (str "Get a notification on your phone when you miss a message "
+                           "here. It uses a free app called ntfy — no account, no email.")}))
+    (.appendChild modal
+      (node :ol {:class "notify-steps"}
+        (node :li {}
+          (node :span {:text "Install ntfy on your phone: "})
+          (node :span {:class "notify-links"}
+            (link "https://play.google.com/store/apps/details?id=io.heckel.ntfy" "Android")
+            (link "https://apps.apple.com/app/ntfy/id1625396347" "iPhone")
+            (link "https://f-droid.org/packages/io.heckel.ntfy/" "F-Droid")))
+        (node :li {}
+          (node :span {:text (str "Add a subscription on " server " with this topic:")})
+          (node :div {:class "notify-row"} input
+            (node :button {:class "ghost" :text "Copy" :on-click copy}))
+          (node :div {:class "notify-aside"}
+            (node :span {:text "No phone? You can "}) web-link
+            (node :span {:text " instead."})))
+        (node :li {:text "Hit Save. A test notification should pop up straight away."})))
+    (.appendChild modal
+      (node :p {:class "notify-warn"
+                :text (str "Keep the topic secret: anyone who knows it can send you "
+                           "notifications, the same way anyone with the link can chat here.")}))
+    (.appendChild modal err)
+    (.appendChild modal
+      (node :div {:class "note-actions"}
+        (node :button {:class "ghost" :text "Cancel" :on-click close})
+        (when topic (node :button {:class "ghost" :text "Turn off" :on-click turn-off}))
+        (node :button {:class "primary" :text "Save" :on-click save})))
+    (.appendChild overlay modal)
+    (.appendChild (.-body js/document) overlay)))
+
+(defn- load-notify-config [room]
+  (-> (fetch-json (str "/api/notify?room=" (enc room)) {})
+      (.then (fn [r]
+               (swap! state assoc :notify r)
+               (refresh-notify-btn!)))))
+
+;; ---------------------------------------------------------------------------
 ;; Screens
 ;; ---------------------------------------------------------------------------
 
@@ -518,6 +719,7 @@
 
 (defn enter-chat [room username]
   ;; Set the browser tab title to the room name
+  (swap! state assoc :room room)
   (set! (.-title js/document) (str room " - kwickchat"))
   (let [history (node :div {:class "history" :id "history"
                             :on-scroll (fn [e] (on-scroll (.-target e)))})
@@ -528,6 +730,9 @@
         send-bt (node :button {:class "send" :text "Send" :on-click send})
         palette (node :div {:class "palette"})
         avatar-display (node :span {:class "me-avatar" :id "me-avatar"})
+        ;; Hidden until we hear whether this server offers away notifications.
+        notify-btn (node :button {:class "notify-toggle" :id "notify-btn" :text "🔕"
+                                  :on-click (fn [] (show-notify-modal room))})
         update-my-avatar (fn []
                           (clear! avatar-display)
                           (.appendChild avatar-display (avatar-or-identicon username (:avatar @state))))
@@ -555,6 +760,7 @@
          (node :div {:class "topbar"}
            (node :span {:class "room-name" :text room})
            (node :span {:class "me"}
+             notify-btn
              (node :button {:class "postits-toggle" :text "📌"
                             :on-click toggle-postits!})
              avatar-display
@@ -563,9 +769,21 @@
          palette
          (node :div {:class "composer"} input send-bt))
        (postit-panel room)))
+    (set! (.. notify-btn -style -display) "none")
     (load-history room)
     (load-notes room)
+    (load-notify-config room)
     (open-stream room)
+    ;; Presence + unread bookkeeping. Coming back to the tab clears the badge
+    ;; and tells the server we're at the keyboard again; while we're here, a
+    ;; heartbeat keeps us marked present (comfortably inside the server's
+    ;; two-minute away threshold).
+    (let [wake (fn [] (clear-unread!) (ping-active! room))]
+      (.addEventListener js/document "visibilitychange"
+                         (fn [] (when-not (.-hidden js/document) (wake))))
+      (.addEventListener js/window "focus" wake)
+      (js/setInterval (fn [] (ping-active! room)) 45000)
+      (ping-active! room))
     (.focus input)))
 
 (defn- init-chat [room]

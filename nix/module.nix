@@ -40,6 +40,31 @@ in
       '';
     };
 
+    public-url = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "https://chat.example.com";
+      description = ''
+        Public URL this kwickchat is reachable at, without a trailing slash.
+        Only used to make away notifications tappable — without it they still
+        arrive, they just don't link back to the room.
+      '';
+    };
+
+    ntfy-server = lib.mkOption {
+      type = lib.types.str;
+      default = "https://ntfy.sh";
+      example = "https://ntfy.example.com";
+      description = ''
+        ntfy server used for away notifications. Members pick their own topic
+        from the web UI; the server is chosen here so kwickchat can't be talked
+        into POSTing to an arbitrary host. Set to "" to switch the feature off
+        entirely — the button then disappears from the UI.
+
+        Nothing is sent anywhere until a member opts in and registers a topic.
+      '';
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "kwickchat";
@@ -87,6 +112,9 @@ in
         KWICKCHAT_HOST = cfg.host;
         KWICKCHAT_PORT = toString cfg.port;
         KWICKCHAT_DIR = cfg.state-directory;
+        KWICKCHAT_NTFY = cfg.ntfy-server;
+      } // lib.optionalAttrs (cfg.public-url != null) {
+        KWICKCHAT_URL = cfg.public-url;
       };
 
       serviceConfig = {
@@ -105,7 +133,9 @@ in
         PrivateTmp = true;
         PrivateDevices = true;
         ReadWritePaths = [ cfg.state-directory ];
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        # AF_UNIX is needed for name resolution via nscd/systemd-resolved,
+        # which outgoing ntfy notifications depend on.
+        RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
         RestrictNamespaces = true;
         LockPersonality = true;
         SystemCallArchitectures = "native";
