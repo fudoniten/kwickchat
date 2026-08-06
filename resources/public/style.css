@@ -592,6 +592,72 @@ input:focus {
   transform: translateY(1px);
 }
 
+/* ---- Away notifications (ntfy) ---- */
+.notify-toggle {
+  background: transparent;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 4px 8px;
+}
+.notify-modal {
+  width: min(520px, 92%);
+  text-align: left;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.notify-modal p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+.notify-steps {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.95rem;
+}
+.notify-links {
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.notify-link {
+  color: var(--accent);
+}
+.notify-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.notify-topic {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--stone-dark);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.notify-topic:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.notify-row .ghost {
+  padding: 10px 16px;
+}
+.notify-aside {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.notify-warn {
+  font-size: 0.85rem;
+}
+
 /* On small screens the panel becomes a slide-over toggled from the topbar. */
 @media (max-width: 1023px) {
   .postits {

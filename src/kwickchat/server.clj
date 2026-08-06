@@ -10,7 +10,8 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [kwickchat.db :as db])
+            [kwickchat.db :as db]
+            [kwickchat.notify :as notify])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.charset StandardCharsets]
@@ -152,6 +153,70 @@
   (println (str "[" kind "] room=" room " user=" username " :: " body)))
 
 ;; ---------------------------------------------------------------------------
+;; Presence: who is actually *at* the keyboard.
+;;
+;; An open SSE stream is not presence — a tab left open overnight is still
+;; "connected" while its owner is asleep. So the browser pings /api/active
+;; while its page is visible, and anyone we haven't heard from in a couple of
+;; minutes counts as away and is worth a push notification.
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private presence (atom {}))    ; [room cookie] -> {:active-at :notified-at}
+
+(def ^:private afk-ms (* 2 60 1000))       ; quiet this long => away
+(def ^:private buzz-cooldown-ms (* 5 60 1000)) ; at most one push per member per window
+(def ^:private presence-ttl-ms (* 24 60 60 1000))
+
+(defn- prune-presence
+  "Keep the map from growing forever. Only bothers once it's biggish, and only
+  drops entries nobody has touched in a day."
+  [m now]
+  (if (< (count m) 500)
+    m
+    (into {}
+          (remove (fn [[_ {:keys [active-at notified-at]}]]
+                    (< (max (or active-at 0) (or notified-at 0))
+                       (- now presence-ttl-ms))))
+          m)))
+
+(defn- mark-active! [room cookie]
+  (let [now (System/currentTimeMillis)]
+    (swap! presence (fn [m]
+                      (-> (prune-presence m now)
+                          (update [room cookie] assoc :active-at now))))))
+
+(defn- claim-buzz!
+  "Decide — atomically, so a burst of messages can't double-buzz — whether this
+  member should be notified right now. True only when they've been away a while
+  and haven't been buzzed inside the cooldown."
+  [room cookie now]
+  (let [k     [room cookie]
+        away? (fn [{:keys [active-at notified-at]}]
+                (and (> (- now (or active-at 0)) afk-ms)
+                     (> (- now (or notified-at 0)) buzz-cooldown-ms)))
+        [old _] (swap-vals! presence
+                            (fn [m]
+                              (if (away? (get m k))
+                                (update m k assoc :notified-at now)
+                                m)))]
+    (away? (get old k))))
+
+(defn- notify-absent!
+  "Buzz everyone in `room` who set up notifications, isn't the person talking,
+  and isn't looking at the page. Failures here must never break sending."
+  [room sender-name text]
+  (try
+    (when (notify/enabled?)
+      (let [now (System/currentTimeMillis)]
+        (doseq [{:keys [cookie username topic]} (db/notifiers-for room)]
+          (when (and (not= username sender-name)
+                     (claim-buzz! room cookie now))
+            (notify/notify! topic room sender-name text)))))
+    (catch Throwable t
+      (binding [*out* *err*]
+        (println "notify error:" (.getMessage t))))))
+
+;; ---------------------------------------------------------------------------
 ;; API handlers
 ;; ---------------------------------------------------------------------------
 
@@ -182,6 +247,7 @@
         (case status
           (:ok :already-claimed)
           (do
+            (mark-active! room tok)
             ;; Announce genuinely new members (not reconnects) so nobody can
             ;; slip into a kids' room and lurk unseen.
             (when joined?
@@ -221,6 +287,10 @@
           (let [msg (db/add-message! room (:username user-info) text (:avatar user-info))]
             (log-content! "chat" room (:username user-info) text)
             (broadcast! room msg)
+            ;; Talking obviously means you're here; everyone else who isn't
+            ;; gets a push if they asked for one.
+            (mark-active! room tok)
+            (notify-absent! room (:username user-info) text)
             (json-response ex 200 {:ok true :message msg} (when new? tok))))))))
 
 (defn- handle-notes [^HttpExchange ex]
@@ -247,6 +317,56 @@
           (log-content! "note" room (:username note) text)
           (broadcast! room "note" note)
           (json-response ex 200 {:ok true :note note} (when new? tok)))
+        (json-response ex 403 {:ok false :error "Pick a username first."} (when new? tok))))))
+
+(defn- handle-active
+  "The browser's 'I'm still here' ping, sent while its page is visible."
+  [^HttpExchange ex]
+  (let [room (:room (request-body ex))
+        [tok new?] (session-token ex)]
+    (when (and (valid-room? room) (db/username-for room tok))
+      (mark-active! room tok))
+    (json-response ex 200 {:ok true} (when new? tok))))
+
+(defn- handle-notify
+  "Report this member's notification setup, plus what the server supports."
+  [^HttpExchange ex]
+  (let [room (get (query-params ex) "room")
+        [tok new?] (session-token ex)]
+    (if (valid-room? room)
+      (json-response ex 200 {:available (notify/enabled?)
+                             :server    (notify/server)
+                             :topic     (:topic (db/notifier-for room tok))}
+                     (when new? tok))
+      (json-response ex 400 {:error "bad room"} (when new? tok)))))
+
+(defn- handle-set-notify
+  "Register an ntfy topic for this member, or clear it with a blank topic."
+  [^HttpExchange ex]
+  (let [body (request-body ex)
+        room (:room body)
+        [tok new?] (session-token ex)
+        topic (some-> (:topic body) str str/trim)]
+    (cond
+      (not (valid-room? room))
+      (json-response ex 400 {:ok false :error "Bad room."} (when new? tok))
+
+      (not (notify/enabled?))
+      (json-response ex 400 {:ok false :error "This server has notifications switched off."} (when new? tok))
+
+      (str/blank? topic)
+      (do (db/clear-notifier! room tok)
+          (json-response ex 200 {:ok true :topic nil} (when new? tok)))
+
+      (not (notify/valid-topic? topic))
+      (json-response ex 400 {:ok false :error "Use 6–64 letters, numbers, - or _."} (when new? tok))
+
+      :else
+      (if (db/set-notifier! room tok topic)
+        (do
+          ;; Prove the phone half of the setup works while they're still looking.
+          (notify/confirm! topic room)
+          (json-response ex 200 {:ok true :topic topic} (when new? tok)))
         (json-response ex 403 {:ok false :error "Pick a username first."} (when new? tok))))))
 
 (defn- handle-stream
@@ -376,6 +496,10 @@
       (= path "/api/notes")         (handle-notes ex)
       (= path "/api/note")          (handle-set-note ex)
       (= path "/api/stream")        (handle-stream ex)
+      (= path "/api/active")        (handle-active ex)
+      (= path "/api/notify")        (if (= method "POST")
+                                      (handle-set-notify ex)
+                                      (handle-notify ex))
       (= path "/api/avatars")       (handle-avatars ex)
       (= path "/api/change-avatar") (handle-change-avatar ex)
 
@@ -406,6 +530,8 @@
                         "--dir"       (recur rest (assoc acc :dir v))
                         "--state-dir" (recur rest (assoc acc :dir v))
                         "--db"        (recur rest (assoc acc :db v))
+                        "--ntfy"      (recur rest (assoc acc :ntfy v))
+                        "--url"       (recur rest (assoc acc :url v))
                         (recur (next remaining) acc)))))
         port (Integer/parseInt (or (:port arg-map)
                                    (System/getenv "KWICKCHAT_PORT")
@@ -423,14 +549,28 @@
         db-path (or (:db arg-map)
                     (System/getenv "KWICKCHAT_DB")
                     (str (io/file state-dir "kwickchat.db")))
+        ;; Where away-from-keyboard push notifications are sent. Operators pick
+        ;; the server (blank switches the feature off); members pick the topic.
+        ntfy-server (or (:ntfy arg-map)
+                        (System/getenv "KWICKCHAT_NTFY")
+                        "https://ntfy.sh")
+        ;; This site's public URL, so notifications can link back to the room.
+        public-url (or (:url arg-map) (System/getenv "KWICKCHAT_URL"))
         server (HttpServer/create (InetSocketAddress. host (int port)) 0)]
     ;; Make sure the state directory exists before SQLite tries to open the
     ;; file — SQLite creates the db file but not its parent directories.
     (when-let [parent (.getParentFile (io/file db-path))]
       (.mkdirs parent))
     (db/init! db-path)
+    (notify/configure! {:server ntfy-server :base-url public-url})
     (.createContext server "/" (handler))
     (.setExecutor server (Executors/newCachedThreadPool))
     (.start server)
     (println (str "kwickchat listening on http://" host ":" port "  (db: " db-path ")"))
+    (println (if (notify/enabled?)
+               (str "away notifications via " (notify/server)
+                    (if public-url
+                      (str "  (links back to " public-url ")")
+                      "  (set KWICKCHAT_URL to make them tappable)"))
+               "away notifications disabled"))
     @(promise)))
