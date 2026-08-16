@@ -11,6 +11,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [kwickchat.db :as db]
+            [kwickchat.minecraft :as minecraft]
             [kwickchat.notify :as notify])
   (:import [com.sun.net.httpserver HttpServer HttpHandler HttpExchange]
            [java.net InetSocketAddress URLDecoder]
@@ -217,6 +218,36 @@
         (println "notify error:" (.getMessage t))))))
 
 ;; ---------------------------------------------------------------------------
+;; Minecraft relay: rooms can echo their chat into a game server, so friends
+;; who are already playing see it without alt-tabbing. The room picks a target
+;; by name from the operator's list; the operator's own mapping is the default.
+;; ---------------------------------------------------------------------------
+
+(defn- minecraft-server-for
+  "Which configured server `room` currently relays to, or nil for none. A
+  choice made in the room wins over the operator's default — unless the config
+  is locked, in which case the file is the only say."
+  [room]
+  (let [chosen (when-not (minecraft/locked?) (db/minecraft-for room))
+        target (cond
+                 (nil? chosen)       (minecraft/default-for room)
+                 (str/blank? chosen) nil             ; switched off in the room
+                 :else               chosen)]
+    (when (and target (minecraft/known-server? target)) target)))
+
+(defn- relay-to-minecraft!
+  "Show a chat message in the room's Minecraft server. Failures here must never
+  break sending."
+  [room sender-name text]
+  (try
+    (when (minecraft/enabled?)
+      (when-let [target (minecraft-server-for room)]
+        (minecraft/notify! target room sender-name text)))
+    (catch Throwable t
+      (binding [*out* *err*]
+        (println "minecraft error:" (.getMessage t))))))
+
+;; ---------------------------------------------------------------------------
 ;; API handlers
 ;; ---------------------------------------------------------------------------
 
@@ -291,6 +322,7 @@
             ;; gets a push if they asked for one.
             (mark-active! room tok)
             (notify-absent! room (:username user-info) text)
+            (relay-to-minecraft! room (:username user-info) text)
             (json-response ex 200 {:ok true :message msg} (when new? tok))))))))
 
 (defn- handle-notes [^HttpExchange ex]
@@ -368,6 +400,62 @@
           (notify/confirm! topic room)
           (json-response ex 200 {:ok true :topic topic} (when new? tok)))
         (json-response ex 403 {:ok false :error "Pick a username first."} (when new? tok))))))
+
+(defn- handle-minecraft
+  "Report which Minecraft server this room echoes into, and which ones it may
+  choose from. Hosts and passwords never leave the server — only names."
+  [^HttpExchange ex]
+  (let [room (get (query-params ex) "room")
+        [tok new?] (session-token ex)]
+    (if (valid-room? room)
+      (json-response ex 200 {:available (boolean (minecraft/enabled?))
+                             :locked    (minecraft/locked?)
+                             :servers   (minecraft/servers)
+                             :server    (minecraft-server-for room)}
+                     (when new? tok))
+      (json-response ex 400 {:error "bad room"} (when new? tok)))))
+
+(defn- handle-set-minecraft
+  "Point this room at one of the operator's Minecraft servers, or switch the
+  relay off with a blank name."
+  [^HttpExchange ex]
+  (let [body (request-body ex)
+        room (:room body)
+        [tok new?] (session-token ex)
+        target (some-> (:server body) str str/trim)]
+    (cond
+      (not (valid-room? room))
+      (json-response ex 400 {:ok false :error "Bad room."} (when new? tok))
+
+      (not (minecraft/enabled?))
+      (json-response ex 400 {:ok false :error "This server has no Minecraft servers set up."} (when new? tok))
+
+      (minecraft/locked?)
+      (json-response ex 403 {:ok false :error "Whoever runs this site has fixed which server this room uses."} (when new? tok))
+
+      ;; Only members get a say — same rule as post-its and notifications.
+      (nil? (db/username-for room tok))
+      (json-response ex 403 {:ok false :error "Pick a username first."} (when new? tok))
+
+      (str/blank? target)
+      (do (db/set-minecraft! room "")
+          (broadcast! room "minecraft" {:server nil})
+          (json-response ex 200 {:ok true :server nil} (when new? tok)))
+
+      (not (minecraft/known-server? target))
+      (json-response ex 400 {:ok false :error "No such Minecraft server."} (when new? tok))
+
+      :else
+      (do
+        (db/set-minecraft! room target)
+        ;; Everyone in the room shares this setting, so tell the open browsers:
+        ;; where your chat is going shouldn't need a page reload to notice.
+        (broadcast! room "minecraft" {:server target})
+        ;; Say so in the game too, which is the only way to know the RCON half
+        ;; of the setup actually works.
+        (minecraft/announce! target room
+                             (str "chat from " room " will show up here"))
+        (json-response ex 200 {:ok true :server target} (when new? tok))))))
 
 (defn- handle-stream
   "Open a long-lived Server-Sent Events connection for a room."
@@ -500,6 +588,9 @@
       (= path "/api/notify")        (if (= method "POST")
                                       (handle-set-notify ex)
                                       (handle-notify ex))
+      (= path "/api/minecraft")     (if (= method "POST")
+                                      (handle-set-minecraft ex)
+                                      (handle-minecraft ex))
       (= path "/api/avatars")       (handle-avatars ex)
       (= path "/api/change-avatar") (handle-change-avatar ex)
 
@@ -532,6 +623,7 @@
                         "--db"        (recur rest (assoc acc :db v))
                         "--ntfy"      (recur rest (assoc acc :ntfy v))
                         "--url"       (recur rest (assoc acc :url v))
+                        "--minecraft" (recur rest (assoc acc :minecraft v))
                         (recur (next remaining) acc)))))
         port (Integer/parseInt (or (:port arg-map)
                                    (System/getenv "KWICKCHAT_PORT")
@@ -556,6 +648,10 @@
                         "https://ntfy.sh")
         ;; This site's public URL, so notifications can link back to the room.
         public-url (or (:url arg-map) (System/getenv "KWICKCHAT_URL"))
+        ;; JSON file naming the Minecraft servers rooms may echo chat into. It
+        ;; holds RCON passwords, so it's a file the operator controls — never
+        ;; anything a browser can influence.
+        minecraft-config (or (:minecraft arg-map) (System/getenv "KWICKCHAT_MINECRAFT"))
         server (HttpServer/create (InetSocketAddress. host (int port)) 0)]
     ;; Make sure the state directory exists before SQLite tries to open the
     ;; file — SQLite creates the db file but not its parent directories.
@@ -563,6 +659,7 @@
       (.mkdirs parent))
     (db/init! db-path)
     (notify/configure! {:server ntfy-server :base-url public-url})
+    (minecraft/configure! minecraft-config)
     (.createContext server "/" (handler))
     (.setExecutor server (Executors/newCachedThreadPool))
     (.start server)
@@ -573,4 +670,8 @@
                       (str "  (links back to " public-url ")")
                       "  (set KWICKCHAT_URL to make them tappable)"))
                "away notifications disabled"))
+    (println (if (minecraft/enabled?)
+               (str "minecraft relay to " (str/join ", " (map :name (minecraft/servers)))
+                    (when (minecraft/locked?) "  (rooms may not change target)"))
+               "minecraft relay disabled"))
     @(promise)))
