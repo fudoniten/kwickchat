@@ -93,9 +93,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce state (atom {:room nil :username nil :avatar nil :last-id 0 :stick true
-                      :avatars [] :notes {} :notify {}}))
+                      :avatars [] :notes {} :notify {} :minecraft {}}))
 
-(declare enter-chat upsert-note!)
+(declare enter-chat upsert-note! refresh-minecraft-btn!)
 
 ;; ---------------------------------------------------------------------------
 ;; DOM helpers
@@ -338,6 +338,13 @@
           (fn [ev]
             (let [note (js->clj (js/JSON.parse (.-data ev)) :keywordize-keys true)]
               (upsert-note! note))))
+    ;; So does the room's Minecraft target — it belongs to the room, so when
+    ;; somebody changes it everyone's pickaxe button should say so at once.
+    (.addEventListener src "minecraft"
+          (fn [ev]
+            (let [msg (js->clj (js/JSON.parse (.-data ev)) :keywordize-keys true)]
+              (swap! state assoc-in [:minecraft :server] (:server msg))
+              (refresh-minecraft-btn!))))
     ;; On a reconnect, pull anything we missed while disconnected.
     (set! (.-onopen src)
           (fn [_]
@@ -644,6 +651,86 @@
                (refresh-notify-btn!)))))
 
 ;; ---------------------------------------------------------------------------
+;; Minecraft relay: echo this room's chat into a game server, so whoever is
+;; already playing sees it in-game. The servers on offer are set up by whoever
+;; runs kwickchat (they need an RCON password, which is not a kid's business);
+;; the room just picks one of them, or none.
+;; ---------------------------------------------------------------------------
+
+(defn- server-label
+  "The friendly name of a server, falling back to its bare name."
+  [nm]
+  (or (some :label (filter #(= nm (:name %)) (:servers (:minecraft @state)))) nm))
+
+(defn- refresh-minecraft-btn! []
+  (when-let [b (by-id "minecraft-btn")]
+    (let [{:keys [available server]} (:minecraft @state)]
+      (set! (.. b -style -display) (if available "inline-flex" "none"))
+      (if server
+        (.remove (.-classList b) "off")
+        (.add (.-classList b) "off"))
+      (.setAttribute b "title" (if server
+                                 (str "Chat here also shows up in " (server-label server))
+                                 "Also show this chat in Minecraft")))))
+
+(defn- show-minecraft-modal [room]
+  (let [{:keys [servers server locked]} (:minecraft @state)
+        overlay (node :div {:class "avatar-picker-overlay"})
+        modal   (node :div {:class "note-modal minecraft-modal"})
+        err     (node :div {:class "error"})
+        chosen  (atom server)
+        close   (fn [] (.remove overlay))
+        options (node :div {:class "mc-options"})
+        save    (fn []
+                  (-> (post-json "/api/minecraft" {:room room :server (or @chosen "")})
+                      (.then (fn [r]
+                               (if (:ok r)
+                                 (do (swap! state assoc-in [:minecraft :server] (:server r))
+                                     (refresh-minecraft-btn!)
+                                     (close))
+                                 (set! (.-textContent err)
+                                       (or (:error r) "Could not save.")))))))
+        ;; One radio row per choice, including "off".
+        option  (fn [value label]
+                  (let [input (node :input {:class "mc-radio"})
+                        row   (node :label {:class "mc-option"})]
+                    (.setAttribute input "type" "radio")
+                    (.setAttribute input "name" "mc-server")
+                    (set! (.-checked input) (= value @chosen))
+                    (set! (.-disabled input) (boolean locked))
+                    (.addEventListener input "change"
+                                       (fn [] (when (.-checked input) (reset! chosen value))))
+                    (.appendChild row input)
+                    (.appendChild row (node :span {:text label}))
+                    row))]
+    (.appendChild modal (node :h3 {:text "⛏️ Show this chat in Minecraft"}))
+    (.appendChild modal
+      (node :p {:text (str "Anything said here can pop up in a Minecraft server's chat, "
+                           "so friends who are already playing don't miss it.")}))
+    (doseq [{:keys [name label]} servers]
+      (.appendChild options (option name label)))
+    (.appendChild options (option nil "Don't send anywhere"))
+    (.appendChild modal options)
+    (when locked
+      (.appendChild modal
+        (node :p {:class "notify-warn"
+                  :text "Whoever runs this site has fixed which server this room uses."})))
+    (.appendChild modal err)
+    (.appendChild modal
+      (node :div {:class "note-actions"}
+        (node :button {:class "ghost" :text "Cancel" :on-click close})
+        (when-not locked
+          (node :button {:class "primary" :text "Save" :on-click save}))))
+    (.appendChild overlay modal)
+    (.appendChild (.-body js/document) overlay)))
+
+(defn- load-minecraft-config [room]
+  (-> (fetch-json (str "/api/minecraft?room=" (enc room)) {})
+      (.then (fn [r]
+               (swap! state assoc :minecraft r)
+               (refresh-minecraft-btn!)))))
+
+;; ---------------------------------------------------------------------------
 ;; Screens
 ;; ---------------------------------------------------------------------------
 
@@ -733,6 +820,14 @@
         ;; Hidden until we hear whether this server offers away notifications.
         notify-btn (node :button {:class "notify-toggle" :id "notify-btn" :text "🔕"
                                   :on-click (fn [] (show-notify-modal room))})
+        ;; Likewise hidden until we know the operator set up any game servers.
+        ;; The target belongs to the room, so somebody else may have moved it
+        ;; since we loaded: re-read it before showing the choices.
+        minecraft-btn (node :button {:class "minecraft-toggle off" :id "minecraft-btn"
+                                     :text "⛏️"
+                                     :on-click (fn []
+                                                 (-> (load-minecraft-config room)
+                                                     (.then #(show-minecraft-modal room))))})
         update-my-avatar (fn []
                           (clear! avatar-display)
                           (.appendChild avatar-display (avatar-or-identicon username (:avatar @state))))
@@ -760,6 +855,7 @@
          (node :div {:class "topbar"}
            (node :span {:class "room-name" :text room})
            (node :span {:class "me"}
+             minecraft-btn
              notify-btn
              (node :button {:class "postits-toggle" :text "📌"
                             :on-click toggle-postits!})
@@ -770,9 +866,11 @@
          (node :div {:class "composer"} input send-bt))
        (postit-panel room)))
     (set! (.. notify-btn -style -display) "none")
+    (set! (.. minecraft-btn -style -display) "none")
     (load-history room)
     (load-notes room)
     (load-notify-config room)
+    (load-minecraft-config room)
     (open-stream room)
     ;; Presence + unread bookkeeping. Coming back to the tab clears the badge
     ;; and tells the server we're at the keyboard again; while we're here, a

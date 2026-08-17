@@ -45,7 +45,14 @@
       topic      TEXT    NOT NULL,
       created_at INTEGER NOT NULL,
       PRIMARY KEY (room, cookie))"
-   "CREATE INDEX IF NOT EXISTS idx_notifiers_room ON notifiers (room)"])
+   "CREATE INDEX IF NOT EXISTS idx_notifiers_room ON notifiers (room)"
+   ;; Which Minecraft server (by the name the operator gave it in the config
+   ;; file) this room echoes its chat into. An empty string means the room was
+   ;; explicitly switched off, which is not the same as never having chosen.
+   "CREATE TABLE IF NOT EXISTS room_minecraft (
+      room       TEXT    NOT NULL PRIMARY KEY,
+      server     TEXT    NOT NULL,
+      updated_at INTEGER NOT NULL)"])
 
 (defn init!
   "Open (or create) the database at `path` and ensure the schema exists."
@@ -307,5 +314,49 @@
                     @conn "DELETE FROM notifiers WHERE room = ? AND cookie = ?")]
       (.setString ps 1 room)
       (.setString ps 2 cookie)
+      (.executeUpdate ps))
+    nil))
+
+;; ---------------------------------------------------------------------------
+;; Minecraft relay: which game server a room echoes its chat into. This is a
+;; property of the room, not of a member — everyone in the room shares it.
+;; ---------------------------------------------------------------------------
+
+(defn minecraft-for
+  "The Minecraft server name this `room` has chosen: a name, \"\" when the room
+  deliberately turned the relay off, or nil when it has never chosen and the
+  operator's default applies."
+  [room]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "SELECT server FROM room_minecraft WHERE room = ?")]
+      (.setString ps 1 room)
+      (with-open [rs (.executeQuery ps)]
+        (when (.next rs) (.getString rs 1))))))
+
+(defn set-minecraft!
+  "Point `room` at `server` (a name from the operator's config), or pass \"\" to
+  turn the relay off for this room. Returns the stored value."
+  [room server]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "INSERT INTO room_minecraft (room, server, updated_at)
+                           VALUES (?,?,?)
+                           ON CONFLICT(room) DO UPDATE SET
+                             server     = excluded.server,
+                             updated_at = excluded.updated_at")]
+      (.setString ps 1 room)
+      (.setString ps 2 server)
+      (.setLong   ps 3 (System/currentTimeMillis))
+      (.executeUpdate ps))
+    server))
+
+(defn clear-minecraft!
+  "Forget `room`'s choice, so the operator's default applies again."
+  [room]
+  (locking lock
+    (with-open [ps (.prepareStatement
+                    @conn "DELETE FROM room_minecraft WHERE room = ?")]
+      (.setString ps 1 room)
       (.executeUpdate ps))
     nil))

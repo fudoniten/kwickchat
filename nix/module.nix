@@ -65,6 +65,37 @@ in
       '';
     };
 
+    minecraft-config-file = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/kwickchat-minecraft.json";
+      description = ''
+        Path to a JSON file naming the Minecraft servers rooms may echo their
+        chat into, over RCON:
+
+        ```json
+        {
+          "servers": {
+            "survival": { "host": "10.0.0.5", "port": 25575,
+                          "password": "…", "label": "Survival world" }
+          },
+          "rooms":   { "minecraft-crew": "survival" },
+          "default": null,
+          "locked":  false
+        }
+        ```
+
+        Each room picks one of these servers by name from its own UI (`rooms`
+        and `default` decide where a room starts out); with `"locked": true`
+        this file is the only say. Leave unset to switch the relay off.
+
+        The file holds RCON passwords, so keep it out of the Nix store —
+        point this at a path managed by sops-nix/agenix and readable by the
+        service user. `ProtectHome` is on for this service, so it must not
+        live under a home directory.
+      '';
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "kwickchat";
@@ -115,6 +146,8 @@ in
         KWICKCHAT_NTFY = cfg.ntfy-server;
       } // lib.optionalAttrs (cfg.public-url != null) {
         KWICKCHAT_URL = cfg.public-url;
+      } // lib.optionalAttrs (cfg.minecraft-config-file != null) {
+        KWICKCHAT_MINECRAFT = toString cfg.minecraft-config-file;
       };
 
       serviceConfig = {
@@ -134,7 +167,7 @@ in
         PrivateDevices = true;
         ReadWritePaths = [ cfg.state-directory ];
         # AF_UNIX is needed for name resolution via nscd/systemd-resolved,
-        # which outgoing ntfy notifications depend on.
+        # which outgoing ntfy notifications and Minecraft RCON depend on.
         RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
         RestrictNamespaces = true;
         LockPersonality = true;

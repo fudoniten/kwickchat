@@ -658,6 +658,50 @@ input:focus {
   font-size: 0.85rem;
 }
 
+/* ---- Minecraft relay ---- */
+.minecraft-toggle {
+  background: transparent;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 4px 8px;
+}
+/* Switched off: same button, visibly inactive. */
+.minecraft-toggle.off {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.minecraft-modal {
+  width: min(460px, 92%);
+  text-align: left;
+}
+.minecraft-modal p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+.mc-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mc-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--stone-dark);
+  cursor: pointer;
+}
+.mc-option:hover {
+  background: var(--stone);
+}
+.mc-radio {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 /* On small screens the panel becomes a slide-over toggled from the topbar. */
 @media (max-width: 1023px) {
   .postits {

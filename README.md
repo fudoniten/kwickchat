@@ -31,6 +31,9 @@ social logins. Just a link and a name.
   supports one. It clears the moment you look at the tab again.
 - **Away notifications.** Each member can opt into a phone notification for
   messages they miss while they're not at the keyboard — see below.
+- **In-game relay.** A room can echo its chat into a Minecraft server, so
+  whoever is already playing sees it without alt-tabbing. Each room picks its
+  own server — see below.
 
 Rooms are unguessable links shared only among friends — keep the link private.
 
@@ -65,6 +68,64 @@ again to change the topic or turn it off.
 
 Settings live per room, per browser — they hang off the same cookie as your
 username, so clearing cookies means setting notifications up again.
+
+### Showing the chat in Minecraft
+
+A room can pipe what's said into a Minecraft server's chat, which is the point
+where "are we on tonight?" reaches the people who are already on:
+
+```
+[minecraft-crew] <Steve> anyone on tonight?
+```
+
+Delivery is Minecraft's own [RCON](https://minecraft.wiki/w/RCON) console:
+kwickchat connects, authenticates, and runs one `tellraw @a`. Nothing has to be
+installed on the game server — just `enable-rcon=true`, `rcon.password` and
+`rcon.port` in `server.properties`. Only chat messages are relayed (not joins
+or post-its), and only outwards: what happens in the game does **not** come
+back into kwickchat.
+
+**Whoever runs kwickchat lists the servers; each room picks one of them.** The
+list lives in a JSON file named by `KWICKCHAT_MINECRAFT`:
+
+```json
+{
+  "servers": {
+    "survival": { "host": "10.0.0.5", "port": 25575,
+                  "password": "…", "label": "Survival world" },
+    "creative": { "host": "10.0.0.6", "password": "…" }
+  },
+  "rooms":   { "minecraft-crew": "survival" },
+  "default":  null,
+  "locked":   false
+}
+```
+
+| Key       | Meaning                                                                    |
+|-----------|----------------------------------------------------------------------------|
+| `servers` | The servers rooms may choose from. `port` defaults to `25575`, `label` to the name (it's what the UI shows). |
+| `rooms`   | Where a room points before anyone chooses in the room itself.              |
+| `default` | Where every other room points before anyone chooses. `null` means nowhere. |
+| `locked`  | `true` freezes the above: rooms then can't change their own target.        |
+
+Inside a room, the ⛏️ button in the top bar lists those servers by label and
+lets any member point the room at one, or at none. Picking one says so in the
+game straight away, which is the only real way to know the RCON half works.
+The button is hidden entirely when no servers are configured.
+
+The **host and password are deliberately not a per-room setting**: an RCON
+password is a secret that shouldn't travel through a browser, and a host typed
+into a box by a kid would make kwickchat a port scanner for the local network.
+Rooms only ever name a server the operator already listed, and the browser is
+told names and labels — never hosts or passwords. Keep the file out of world
+readable paths; on NixOS point `minecraft-config-file` at a sops-nix/agenix
+secret.
+
+Message text is flattened before it's sent — one line, no control characters,
+no `§` colour codes, 200 characters max — so nobody can recolour the whole
+server's chat from a chat room. Relaying happens off to one side of sending: if
+the game server is slow, down, or has the wrong password, the chat room carries
+on and the failure lands in the log.
 
 ### Moderation log
 
@@ -127,6 +188,7 @@ command-line flag (`--host`, `--port`, `--dir`, `--db`), which take precedence:
 | `KWICKCHAT_DB`   | `--db`   | `$KWICKCHAT_DIR/kwickchat.db` | Explicit path to the SQLite file (overrides the state dir) |
 | `KWICKCHAT_NTFY` | `--ntfy` | `https://ntfy.sh`   | ntfy server for away notifications; set it empty to switch them off |
 | `KWICKCHAT_URL`  | `--url`  | *(none)*            | This site's public URL, so notifications link back to the room |
+| `KWICKCHAT_MINECRAFT` | `--minecraft` | *(none)*   | JSON file listing the Minecraft servers rooms may relay chat into; unset switches the relay off |
 
 All state that needs to survive a restart lives under the state directory — at
 present that's the single SQLite database (`kwickchat.db`). The directory is
@@ -161,6 +223,7 @@ The flake exposes a package and a NixOS module.
             public-url = "https://chat.example.com"; # makes notifications tappable
             # state-directory = "/var/lib/kwickchat"; # persistent data location
             # ntfy-server = "https://ntfy.sh";  # "" turns away notifications off
+            # minecraft-config-file = "/run/secrets/kwickchat-minecraft.json";
             # openFirewall = true; # only if you expose it directly
           };
         }
@@ -180,6 +243,12 @@ already sends `X-Accel-Buffering: no` for nginx).
 Set `public-url` to whatever address your users actually type, so away
 notifications can link back to the room; `ntfy-server` picks where those
 notifications go (`""` removes the feature from the UI).
+
+`minecraft-config-file` points at the JSON above, listing the game servers
+rooms may relay chat into. It contains RCON passwords, so keep it out of the
+Nix store — a sops-nix/agenix secret readable by the `kwickchat` user is the
+right shape. The service runs with `ProtectHome`, so the file must not live
+under a home directory. Leave the option unset and the ⛏️ button never appears.
 
 ### One-time hash step
 
@@ -205,6 +274,7 @@ build.clj                    tools.build: cljs compile + uberjar
 src/kwickchat/server.clj     HTTP server, routing, SSE, cookies, presence
 src/kwickchat/db.clj         SQLite persistence
 src/kwickchat/notify.clj     away notifications over ntfy
+src/kwickchat/minecraft.clj  relaying room chat into Minecraft over RCON
 src/kwickchat/client.cljs    the entire front end
 resources/public/            index.html + style.css (main.js is built)
 flake.nix, nix/              Nix package + NixOS module
